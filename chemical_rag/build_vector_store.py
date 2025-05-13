@@ -1195,7 +1195,7 @@ class VectorDBBuilder:
             return
             
         # 创建输出目录
-        output_dir = Path("./chunks")  # 使用相对路径，在当前工作目录下创建chunks文件夹
+        output_dir = Path(r"C:\Users\Administrator\Desktop\chunks")  # 使用相对路径，在当前工作目录下创建chunks文件夹
         output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"开始将文本块保存到Excel文件，输出目录: {output_dir}")
@@ -1219,131 +1219,8 @@ class VectorDBBuilder:
                 # 获取原始文本
                 raw_text = chunk.page_content
                 
-                # 去除章节编号以创建原文内容
-                cleaned_text = raw_text
-                
-                # 扩展的章节编号匹配模式
-                section_patterns = [
-                    # 中文序号
-                    r'^\s*[一二三四五六七八九十百千万零]+[、.．]\s*',  # 匹配"一、"等中文序号
-                    r'^\s*[（(（][一二三四五六七八九十]+[)））]\s*',  # 匹配"(一)"等
-                    r'^\s*第[一二三四五六七八九十]+[章节篇部分]\s*',  # 匹配"第一章"等
-                    
-                    # 数字序号 - 处理各种格式和标点
-                    r'^\s*\d+[\s]*[、.．:：]\s*',  # 匹配"1、"、"1."、"1："等，包括数字后可能的空格
-                    
-                    # 三级和四级标题优先匹配（更具体的模式先匹配）
-                    r'^\s*\d+\.\d+\.\d+\.\d+',  # 匹配"1.1.1.1"等完整四级标题（无需后续标点）
-                    r'^\s*\d+\.\d+\.\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1.1.1"等带标点的四级标题
-                    r'^\s*\d+\.\d+\.\d+',  # 匹配"1.1.1"、"7.1.1"等完整三级标题（无需后续标点）
-                    r'^\s*\d+\.\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1.1"等带标点的三级标题
-                    
-                    # 二级标题
-                    r'^\s*\d+\.\d+',  # 匹配"1.1"、"5.2"等完整二级标题（无需后续标点）
-                    r'^\s*\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1"、"1.1、"等带标点的二级标题
-                    
-                    # 特殊格式
-                    r'^\s*\d+\s*\.\s*\d+\s*',  # 匹配特殊格式如"3. 1"或"3.1"等带空格或不带空格的编号
-                    r'^\s*[A-Za-z]\s*[)）、.．:：]\s*',  # 匹配字母编号如"A."、"a、"等
-                    r'^\s*[（(（]\d+[)））]\s*',  # 匹配"(1)"等
-                    r'^\s*附录\s*[A-Za-z][\s:：]*',  # 匹配"附录A"等
-                    
-                    # 中文序号与数字混合
-                    r'^\s*[一二三四五六七八九十][\s\.．]\d+[\s\.．]*',  # 匹配"一.1"等混合格式
-                    r'^\s*第\d+[章节篇部分][\s\.．]*',  # 匹配"第1章"等
-                ]
-                
-                # 按照优先级依次尝试移除章节编号
-                for pattern in section_patterns:
-                    # 尝试匹配开头的章节编号
-                    if re.match(pattern, cleaned_text):
-                        cleaned_text = re.sub(pattern, '', cleaned_text, count=1)
-                        break  # 找到匹配后立即退出，避免过度匹配
-                
-                # 特殊情况：处理章节编号残留问题
-                # 1. 处理诸如"3. 1"这样格式后，可能只删除了"3."而留下"1"
-                # 2. 处理"5.2煤矿安全监控系统"这种情况，可能只删除了"5."而留下"2煤矿安全监控系统"
-                # 3. 处理"7.7.1"这种情况，可能只删除了"7.7"而留下".1"开头的文本
-                
-                # 采用新的处理方式：抽取前缀并检查是否是章节编号
-                if cleaned_text.strip():
-                    # 获取前12个字符，去除空格后判断是否存在章节编号
-                    prefix = cleaned_text.strip()[:12].replace(' ', '')
-                    
-                    # 检查前缀是否包含典型的章节编号格式
-                    is_section_number = False
-                    section_pattern = None
-                    
-                    # 检查四级标题编号（例如：6.3.2.1）
-                    if re.match(r'^\.?\d+\.?\d+\.?\d+\.?\d+', prefix):
-                        is_section_number = True
-                        section_pattern = re.match(r'^\.?\d+\.?\d+\.?\d+\.?\d+', prefix).group(0)
-                    # 检查三级标题编号（例如：6.3.2或.3.2）
-                    elif re.match(r'^\.?\d+\.?\d+\.?\d+', prefix):
-                        is_section_number = True
-                        section_pattern = re.match(r'^\.?\d+\.?\d+\.?\d+', prefix).group(0)
-                    # 检查二级标题编号（例如：6.3或.3）
-                    elif re.match(r'^\.?\d+\.?\d+', prefix):
-                        is_section_number = True
-                        section_pattern = re.match(r'^\.?\d+\.?\d+', prefix).group(0)
-                    # 检查以点号开头的数字（例如：.2）
-                    elif re.match(r'^\.+\d+', prefix):
-                        is_section_number = True
-                        section_pattern = re.match(r'^\.+\d+', prefix).group(0)
-                    
-                    if is_section_number and section_pattern:
-                        # 找到章节编号的结束位置
-                        pos = len(section_pattern)
-                        
-                        # 简单直接地去除章节编号
-                        if pos < len(cleaned_text.strip()):
-                            cleaned_text = cleaned_text.strip()[pos:]
-                        
-                            # 去除可能存在的前导空格
-                            cleaned_text = cleaned_text.lstrip()
-                            
-                            logger.debug(f"检测到章节编号 '{section_pattern}'，已移除")
-                
-                # 作为备选方案，保留原有的处理逻辑以防新方法有遗漏
-                # 首先检查是否仍以点号开头
-                if cleaned_text.strip() and cleaned_text.strip()[0] == '.':
-                    lines = cleaned_text.split('\n')
-                    first_line = lines[0].strip()
-                    
-                    # 检查是否是类似".1"或".1.2"这样的残留编号
-                    if re.match(r'^\.+\d+', first_line):
-                        # 使用更宽松的条件检查原始文本，确保捕获所有多级标题格式
-                        if raw_text.strip() and ('.' in raw_text[:10]):
-                            # 移除开头的所有点号和紧跟的数字
-                            # 更彻底的处理方式：如果以点号开头，直接去除所有开头的点号+数字组合
-                            pattern = r'^\.+\d+\.?'
-                            while re.match(pattern, lines[0]):
-                                lines[0] = re.sub(pattern, '', lines[0])
-                            cleaned_text = '\n'.join(lines)
-                
-                # 然后检查是否以数字开头，这可能是其他编号处理不完全的情况
-                elif cleaned_text.strip() and cleaned_text.strip()[0].isdigit():
-                    lines = cleaned_text.split('\n')
-                    first_line = lines[0].strip()
-                    
-                    # 情况1：如果第一行只是一个数字
-                    if re.match(r'^\d+\s*$', first_line):
-                        if len(lines) > 1:
-                            cleaned_text = '\n'.join(lines[1:])  # 删除只有数字的第一行
-                    
-                    # 情况2：如果第一行以数字开头后面紧跟空格
-                    elif re.match(r'^\d+\s+', first_line):
-                        lines[0] = re.sub(r'^\d+\s+', '', lines[0])  # 删除开头的数字和空格
-                        cleaned_text = '\n'.join(lines)
-                    
-                    # 情况3：处理"2煤矿安全监控系统"这种紧凑形式（数字直接连着文本，没有空格）
-                    elif re.match(r'^\d+\S', first_line):
-                        # 只有当这一行看起来像是被部分处理的多级标题时才处理
-                        # 通常这种情况发生在文本是"X.Y章节名"，处理后变成"Y章节名"
-                        # 我们通过检查原始文本是否包含类似"X.Y"的模式来确认
-                        if raw_text.strip() and re.match(r'^\s*\d+\.', raw_text.strip()):
-                            lines[0] = re.sub(r'^\d+', '', lines[0])  # 删除开头的数字
-                            cleaned_text = '\n'.join(lines)
+                # 使用优化后的章节编号移除算法
+                cleaned_text = self._remove_chapter_numbering(raw_text)
                 
                 data.append({
                     "原文内容": cleaned_text.strip(),
@@ -1362,6 +1239,230 @@ class VectorDBBuilder:
         
         total_files = len(file_chunks)
         logger.info(f"✅ 完成保存 {total_files} 个文件的文本块到Excel文件")
+
+    def _remove_chapter_numbering(self, text):
+        """移除文本开头的章节编号
+        
+        Args:
+            text: 原始文本
+            
+        Returns:
+            处理后的文本，章节编号被移除
+        """
+        if not text or len(text.strip()) < 2:
+            return text
+        
+        # 获取前12个字符，去除空格后判断是否存在章节编号
+        prefix = text[:12].replace(' ', '')
+        
+        # 检查前缀是否包含典型的章节编号格式
+        section_pattern = None
+        
+        # 多种章节编号模式
+        patterns = [
+            # 标准数字格式
+            r'^\.?\d+\.?\d+\.?\d+\.?\d+',  # 四级标题 6.3.2.1
+            r'^\.?\d+\.?\d+\.?\d+',         # 三级标题 6.3.2
+            r'^\.?\d+\.?\d+',               # 二级标题 6.3
+            r'^\.+\d+',                     # 点号开头的数字 .2
+            # 中文序号
+            r'^[（(（][一二三四五六七八九十]+[)））]',  # （一）
+            r'^[一二三四五六七八九十]+[、.．]',       # 一、
+        ]
+        
+        # 尝试匹配各种模式
+        for pattern in patterns:
+            match = re.match(pattern, prefix)
+            if match:
+                section_pattern = match.group(0)
+                break
+        
+        # 如果找到章节编号，则移除
+        if section_pattern:
+            # 直接截取章节编号后的部分
+            if len(section_pattern) < len(text):
+                return text[len(section_pattern):].lstrip()
+        
+        # 如果没有匹配到章节编号，返回原文本
+        return text
+
+    def process_single_file(self, file_path: str) -> bool:
+        """处理单个文件并更新向量数据库
+        
+        用于增量更新向量数据库，当上传新文件时使用
+        
+        Args:
+            file_path: 文件的绝对路径
+            
+        Returns:
+            bool: 处理是否成功
+        """
+        try:
+            logger.info(f"开始处理文件 {file_path} 并增量更新向量数据库")
+            
+            # 转换为Path对象
+            file_path_obj = Path(file_path)
+            
+            # 确认文件存在
+            if not file_path_obj.exists():
+                logger.error(f"文件不存在: {file_path}")
+                return False
+                
+            # 确认文件格式受支持
+            if file_path_obj.suffix.lower() not in ['.pdf', '.docx', '.doc', '.xlsx', '.xls']:
+                logger.error(f"不支持的文件格式: {file_path_obj.suffix}")
+                return False
+                
+            # 加载单个文档
+            docs = self._load_single_document(file_path_obj)
+            
+            if not docs:
+                logger.warning(f"文件 {file_path_obj.name} 无法加载或没有内容")
+                return False
+                
+            logger.info(f"成功加载文件 {file_path_obj.name}，共 {len(docs)} 页内容")
+            
+            # 合并文件的所有页面
+            full_content = "\n".join([doc.page_content for doc in docs])
+            
+            # 创建完整文档对象
+            whole_doc = Document(
+                page_content=full_content,
+                metadata={
+                    "source": str(file_path_obj),
+                    "file_name": file_path_obj.name,
+                    "page_count": len(docs),
+                    "is_merged_doc": True
+                }
+            )
+            
+            # 按章节分块
+            chunks = []
+            metadata = whole_doc.metadata.copy()
+            
+            # 移除分块后不再适用的元数据
+            if "is_merged_doc" in metadata:
+                del metadata["is_merged_doc"]
+            
+            # 按章节分块
+            sections = self._split_by_section(whole_doc.page_content)
+            logger.info(f"文件 {file_path_obj.name} 共找到 {len(sections)} 个章节")
+            
+            # 按章节处理
+            if sections:
+                # 使用章节结构分块
+                for i, (title, content, section_meta) in enumerate(sections):
+                    if not content.strip():  # 跳过空章节
+                        continue
+                        
+                    # 生成内容哈希
+                    content_hash = hashlib.md5(content.encode()).hexdigest()
+                    
+                    # 合并元数据
+                    enhanced_metadata = metadata.copy()
+                    enhanced_metadata.update(section_meta)  # 添加章节元数据
+                    enhanced_metadata["content_hash"] = content_hash
+                    enhanced_metadata["chunk_index"] = i
+                    enhanced_metadata["total_chunks"] = len(sections)
+                    enhanced_metadata["chunk_type"] = "section"
+                    
+                    chunks.append(Document(
+                        page_content=content,
+                        metadata=enhanced_metadata
+                    ))
+            else:
+                # 使用递归分块
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=self.config.chunk_size,
+                    chunk_overlap=self.config.chunk_overlap,
+                    separators=["\n\n", "\n", "。", "；", "！", "？", "，", " ", ""],
+                    length_function=len,
+                    add_start_index=True,
+                    is_separator_regex=False
+                )
+                
+                # 对完整文档进行分块
+                split_texts = text_splitter.split_text(whole_doc.page_content)
+                
+                # 处理每个文本块
+                for i, text in enumerate(split_texts):
+                    if not text.strip():  # 跳过空文本块
+                        continue
+                        
+                    # 生成内容哈希
+                    content_hash = hashlib.md5(text.encode()).hexdigest()
+                    enhanced_metadata = metadata.copy()
+                    enhanced_metadata["content_hash"] = content_hash
+                    enhanced_metadata["chunk_index"] = i
+                    enhanced_metadata["total_chunks"] = len(split_texts)
+                    enhanced_metadata["chunk_type"] = "fixed_size"
+                    
+                    chunks.append(Document(
+                        page_content=text,
+                        metadata=enhanced_metadata
+                    ))
+            
+            if not chunks:
+                logger.warning(f"文件 {file_path_obj.name} 未生成任何文本块")
+                return False
+                
+            logger.info(f"文件 {file_path_obj.name} 生成了 {len(chunks)} 个文本块")
+            
+            # 检查向量数据库是否存在
+            vector_db_path = Path(self.config.vector_db_path)
+            
+            # 创建嵌入模型
+            embeddings = self.create_embeddings()
+            
+            # 增量更新向量数据库
+            if vector_db_path.exists() and any(vector_db_path.glob("*")):
+                try:
+                    # 加载现有向量数据库
+                    vector_store = FAISS.load_local(
+                        str(vector_db_path),
+                        embeddings,
+                        allow_dangerous_deserialization=True
+                    )
+                    
+                    # 为新文件创建向量
+                    logger.info(f"为文件 {file_path_obj.name} 生成向量并更新数据库")
+                    vector_store.add_documents(chunks)
+                    
+                    # 保存更新后的向量数据库
+                    vector_store.save_local(str(vector_db_path))
+                    logger.info(f"成功更新向量数据库，新增 {len(chunks)} 个文本块")
+                    
+                    return True
+                except Exception as e:
+                        logger.error(f"向量数据库增量更新失败: {str(e)}")
+                        # 如果增量更新失败，记录错误但仍然尝试重建整个数据库
+                        logger.warning("尝试重建整个向量数据库...")
+            
+            # 如果向量数据库不存在或增量更新失败，从当前文件创建新的向量数据库
+            try:
+                # 创建必要的目录
+                vector_db_path.mkdir(parents=True, exist_ok=True)
+                
+                # 构建向量存储
+                logger.info(f"从文件 {file_path_obj.name} 创建新的向量数据库")
+                vector_store = FAISS.from_documents(
+                    chunks,
+                    embeddings,
+                    distance_strategy=DistanceStrategy.COSINE
+                )
+                
+                # 保存向量数据库
+                vector_store.save_local(str(vector_db_path))
+                logger.info(f"成功创建向量数据库，包含 {len(chunks)} 个文本块")
+                
+                return True
+            except Exception as e:
+                logger.error(f"创建向量数据库失败: {str(e)}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"处理文件 {file_path} 时发生错误: {str(e)}")
+            return False
 
 
 if __name__ == "__main__":

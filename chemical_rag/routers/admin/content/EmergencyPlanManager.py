@@ -246,20 +246,17 @@ async def upload_files(
                 )
             
             # 检查文件大小
-            content = file.read()
+            content = await file.read()
             if len(content) > 50 * 1024 * 1024:  # 50MB
                 return JSONResponse(
                     status_code=400,
                     content={"success": False, "message": f"文件过大: {file.filename}, 最大允许50MB"}
                 )
             
-            # 将文件指针重置到开始位置
-            file.seek(0)
-            
-            # 保存文件
+            # 保存文件 - 直接使用已读取的content，不需要重置文件指针
             file_path = os.path.join(EMERGENCY_PLAN_PATH, file.filename)
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(content)
             
             uploaded_files.append(file.filename)
         

@@ -19,6 +19,20 @@ import traceback
 # 导入配置
 from config import Config
 
+# 添加项目根目录到Python路径
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+
+# 导入向量数据库构建器
+try:
+    from chemical_rag.build_vector_store import VectorDBBuilder
+except ImportError:
+    # 尝试直接导入
+    from build_vector_store import VectorDBBuilder
+
+# 导入向量存储
+from langchain_community.vectorstores import FAISS
+
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -249,37 +263,80 @@ async def upload_files(
         admin_id = await get_current_admin(request)
         
         uploaded_files = []
+        vector_db_updated = False
+        vector_db_errors = []
+        
+        # 初始化向量数据库构建器
+        vector_builder = VectorDBBuilder(config)
         
         for file in files:
             # 检查文件类型
-            if not (file.filename.endswith('.xlsx') or file.filename.endswith('.xls')):
+            supported_extensions = ['.xlsx', '.xls', '.pdf', '.docx', '.doc']
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            
+            if file_ext not in supported_extensions:
                 return JSONResponse(
                     status_code=400,
-                    content={"success": False, "message": f"不支持的文件类型: {file.filename}, 只支持.xlsx 和.xls 文件"}
+                    content={"success": False, "message": f"不支持的文件类型: {file.filename}, 支持的格式有: Excel文件(.xlsx, .xls), PDF文件(.pdf), Word文档(.docx, .doc)"}
                 )
             
-            # 检查文件大小
-            content = file.read()
-            if len(content) > 10 * 1024 * 1024:  # 10MB
+            # 检查文件大小限制
+            content = await file.read()
+            # PDF文件可以更大一些，最大允许20MB
+            size_limit = 20 * 1024 * 1024 if file_ext == '.pdf' else 10 * 1024 * 1024
+            
+            if len(content) > size_limit:
+                max_size = "20MB" if file_ext == '.pdf' else "10MB"
                 return JSONResponse(
                     status_code=400,
-                    content={"success": False, "message": f"文件过大: {file.filename}, 最大允许10MB"}
+                    content={"success": False, "message": f"文件过大: {file.filename}, 最大允许{max_size}"}
                 )
             
-            # 将文件指针重置到开始位置
-            file.seek(0)
-            
-            # 保存文件
+            # 保存文件 - 直接使用已读取的内容，不需要重置文件指针
             file_path = os.path.join(KNOWLEDGE_BASE_PATH, file.filename)
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(content)
             
             uploaded_files.append(file.filename)
+            
+            # 为上传的文件增量更新向量数据库
+            try:
+                logger.info(f"开始为文件 {file.filename} 更新向量数据库")
+                success = vector_builder.process_single_file(file_path)
+                if success:
+                    vector_db_updated = True
+                    logger.info(f"文件 {file.filename} 已成功添加到向量数据库")
+                else:
+                    vector_db_errors.append(f"无法将文件 {file.filename} 添加到向量数据库")
+                    logger.warning(f"无法将文件 {file.filename} 添加到向量数据库")
+            except Exception as e:
+                error_msg = f"向量数据库更新失败 ({file.filename}): {str(e)}"
+                vector_db_errors.append(error_msg)
+                logger.error(error_msg)
+                # 继续处理其他文件，不让单个文件的失败影响整体上传
         
         # 记录操作日志（不阻止主要功能）
         log_admin_operation(admin_id, "上传文件", f"上传了{len(uploaded_files)}个文件")
         
-        return {"success": True, "message": f"成功上传 {len(uploaded_files)} 个文件", "files": uploaded_files}
+        # 根据向量数据库更新状态返回不同的消息
+        if vector_db_updated:
+            if vector_db_errors:
+                # 部分文件更新成功
+                return {"success": True, 
+                        "message": f"成功上传 {len(uploaded_files)} 个文件，但部分文件未能添加到向量数据库", 
+                        "files": uploaded_files,
+                        "vector_db_errors": vector_db_errors}
+            else:
+                # 全部更新成功
+                return {"success": True, 
+                        "message": f"成功上传 {len(uploaded_files)} 个文件并更新了知识库向量数据库", 
+                        "files": uploaded_files}
+        else:
+            # 上传成功但向量数据库更新失败
+            return {"success": True, 
+                    "message": f"成功上传 {len(uploaded_files)} 个文件，但未能更新向量数据库", 
+                    "files": uploaded_files,
+                    "vector_db_errors": vector_db_errors}
     except Exception as e:
         logger.error(f"文件上传失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
@@ -324,7 +381,7 @@ async def delete_file(
     file_name: str
 ):
     """
-    删除知识库中的单个文件
+            media_type='application/octet-stream'
     """
     try:
         # 获取管理员ID
@@ -336,13 +393,75 @@ async def delete_file(
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="文件不存在")
         
+    file_name: str
+):
+    """
         # 删除文件
         os.remove(file_path)
         
+        # 获取管理员ID
+        admin_id = await get_current_admin(request)
+        
+        file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
+        
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 记录文件路径，用于向量数据库清理
+        file_path_str = str(Path(file_path).resolve())
+        
+        # 删除文件
+        os.remove(file_path)
+        
+        # 尝试从向量数据库中删除相关数据
+        vector_db_updated = False
+        vector_db_error = None
+        
+        try:
+            # 创建向量数据库构建器
+            vector_builder = VectorDBBuilder(config)
+            
+            # 检查向量数据库是否存在
+            vector_db_path = Path(config.vector_db_path)
+            if vector_db_path.exists() and any(vector_db_path.glob("*")):
+                # 创建嵌入模型
+                embeddings = vector_builder.create_embeddings()
+                
+                # 加载向量数据库
+                vector_store = FAISS.load_local(
+                    str(vector_db_path),
+                    embeddings,
+                    allow_dangerous_deserialization=True
+                )
+                
+                # 查询向量数据库中的所有向量
+                all_docs = vector_store.docstore._dict
+                
+                # 计算要删除的向量ID
+                docs_to_delete = []
+                deletion_count = 0
+                
+                for doc_id, doc in all_docs.items():
+                    # 检查文档的来源是否匹配要删除的文件
+                    doc_source = doc.metadata.get('source', '')
+                    if doc_source == file_path_str or file_name in doc_source:
+                        docs_to_delete.append(doc_id)
+                        deletion_count += 1
+                
+                # 如果有要删除的向量
+                if docs_to_delete:
+                    # 删除向量
         # 记录操作日志（不阻止主要功能）
         log_admin_operation(admin_id, "删除", f"删除了文件{file_name}")
         
-        return {"success": True, "message": f"成功删除文件: {file_name}"}
+                    vector_store.save_local(str(vector_db_path))
+                    
+                    logger.info(f"从向量数据库中删除了 {deletion_count} 个与文件 {file_name} 相关的向量")
+                    vector_db_updated = True
+                else:
+                    logger.info(f"向量数据库中未找到与文件 {file_name} 相关的向量")
+            else:
     except HTTPException:
         raise
     except Exception as e:
@@ -356,7 +475,7 @@ async def batch_delete_files(
     batch_request: BatchDeleteRequest
 ):
     """
-    批量删除知识库文件
+        else:
     """
     try:
         # 获取管理员ID
@@ -372,25 +491,100 @@ async def batch_delete_files(
             file_name = os.path.basename(file_path)
             file_map[str(i + 1)] = {"name": file_name, "path": file_path}
         
+    """
+    try:
+        # 获取管理员ID
         # 删除指定ID的文件
         for file_id in batch_request.file_ids:
             if file_id in file_map:
                 file_info = file_map[file_id]
                 try:
+        
+        # 获取所有文件的ID和名称映射
+        file_map = {}
+        for i, file_path in enumerate(file_paths):
                     os.remove(file_info["path"])
                     deleted_files.append(file_info["name"])
                 except Exception as e:
                     failed_files.append({"name": file_info["name"], "error": str(e)})
         
+        
+        # 删除指定ID的文件
+        for file_id in batch_request.file_ids:
+            if file_id in file_map:
+                file_info = file_map[file_id]
+                try:
+                    # 记录文件路径
+                    deleted_file_paths.append(str(Path(file_info["path"]).resolve()))
+                    
+                    # 删除文件
+                    os.remove(file_info["path"])
+                    deleted_files.append(file_info["name"])
+                except Exception as e:
+                    failed_files.append({"name": file_info["name"], "error": str(e)})
+        
+        # 尝试从向量数据库中删除相关数据
+        vector_db_updated = False
+        vector_db_error = None
+        vector_db_deleted_count = 0
+        
+        try:
+            if deleted_file_paths:
+                # 创建向量数据库构建器
+                vector_builder = VectorDBBuilder(config)
+                
+                # 检查向量数据库是否存在
+                vector_db_path = Path(config.vector_db_path)
+                if vector_db_path.exists() and any(vector_db_path.glob("*")):
+                    # 创建嵌入模型
+                    embeddings = vector_builder.create_embeddings()
+                    
+                    # 加载向量数据库
+                    vector_store = FAISS.load_local(
+                        str(vector_db_path),
+                        embeddings,
+                        allow_dangerous_deserialization=True
+                    )
+                    
+                    # 查询向量数据库中的所有向量
+                    all_docs = vector_store.docstore._dict
+                    
+                    # 计算要删除的向量ID
+                    docs_to_delete = []
+                    
+                    for doc_id, doc in all_docs.items():
+                        # 检查文档的来源是否匹配要删除的文件
+                        doc_source = doc.metadata.get('source', '')
+                        
+                        # 检查文档源是否在已删除文件列表中
+                        for deleted_path in deleted_file_paths:
+                            if doc_source == deleted_path or any(Path(deleted_path).name in doc_source for deleted_path in deleted_file_paths):
+                                docs_to_delete.append(doc_id)
+                                vector_db_deleted_count += 1
+                                break
+                    
+                    # 如果有要删除的向量
+                    if docs_to_delete:
+                        # 删除向量
         # 记录操作日志（不阻止主要功能）
         log_admin_operation(admin_id, "删除", f"批量删除了{len(deleted_files)}个文件")
         
-        return {
+                        vector_store.save_local(str(vector_db_path))
+                        
             "success": True,
-            "message": f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个",
             "deleted_files": deleted_files,
             "failed_files": failed_files
         }
+                else:
+                    logger.info("向量数据库不存在，无需清理")
+        except Exception as e:
+            vector_db_error = str(e)
+            logger.error(f"从向量数据库中删除数据失败: {str(e)}")
+        
+        # 记录操作日志（不阻止主要功能）
+        log_admin_operation(admin_id, "删除", f"批量删除了{len(deleted_files)}个文件")
+        
+        # 根据向量数据库更新状态返回不同的消息
     except Exception as e:
         logger.error(f"批量删除文件失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"批量删除文件失败: {str(e)}")
@@ -403,7 +597,7 @@ async def preview_file(
     max_rows: int = Query(5, description="最大预览行数")
 ):
     """
-    获取Excel文件的预览内容
+            base_response["message"] = f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个，向量数据库无需更新"
     """
     try:
         # 获取管理员ID
@@ -416,34 +610,101 @@ async def preview_file(
             raise HTTPException(status_code=404, detail="文件不存在")
         
         # 检查文件类型
-        if not (file_name.endswith('.xlsx') or file_name.endswith('.xls')):
-            raise HTTPException(status_code=400, detail="不支持的文件类型，只支持Excel文件")
+):
         
-        # 尝试导入pandas库，用于Excel文件操作
-        try:
-            import pandas as pd
-        except ImportError:
-            return {"success": False, "message": "服务器缺少pandas库，无法预览Excel文件"}
+    获取文件的预览内容
+    """
+    try:
+        # 获取管理员ID
+        admin_id = await get_current_admin(request)
         
-        # 读取Excel文件
-        try:
-            df = pd.read_excel(file_path, nrows=max_rows)
-            columns = [{"prop": f"col{i+1}", "label": col} for i, col in enumerate(df.columns)]
+        file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
+        
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 检查文件类型
+        file_ext = os.path.splitext(file_name)[1].lower()
+        
+        # 根据文件类型提供不同的预览
+        if file_ext in ['.xlsx', '.xls']:
+            # Excel文件预览
+            try:
+                import pandas as pd
+            except ImportError:
+                return {"success": False, "message": "服务器缺少pandas库，无法预览Excel文件"}
             
-            # 将DataFrame转换为适合前端显示的格式
-            data = []
-            for _, row in df.iterrows():
-                item = {}
-                for i, col in enumerate(df.columns):
-                    item[f"col{i+1}"] = str(row[col])
-                data.append(item)
-            
-            # 记录操作日志（不阻止主要功能）
-            log_admin_operation(admin_id, "查询", f"预览了文件{file_name}")
-            
-            return {"success": True, "columns": columns, "data": data}
-        except Exception as e:
-            return {"success": False, "message": f"无法读取Excel文件: {str(e)}"}
+            # 读取Excel文件
+            try:
+                df = pd.read_excel(file_path, nrows=max_rows)
+                columns = [{"prop": f"col{i+1}", "label": col} for i, col in enumerate(df.columns)]
+                
+                # 将DataFrame转换为适合前端显示的格式
+                data = []
+                for _, row in df.iterrows():
+                    item = {}
+                    for i, col in enumerate(df.columns):
+                        item[f"col{i+1}"] = str(row[col])
+                    data.append(item)
+                
+                # 记录操作日志（不阻止主要功能）
+                log_admin_operation(admin_id, "查询", f"预览了文件{file_name}")
+                
+                return {"success": True, "columns": columns, "data": data}
+            except Exception as e:
+                return {"success": False, "message": f"无法读取Excel文件: {str(e)}"}
+        
+        elif file_ext == '.pdf':
+            # PDF文件预览（提取前几页文本）
+            try:
+                # 尝试使用PyPDF2提取文本
+                try:
+                    from PyPDF2 import PdfReader
+                except ImportError:
+                    return {"success": False, "message": "服务器缺少PyPDF2库，无法预览PDF文件"}
+                
+                reader = PdfReader(file_path)
+                pages = min(3, len(reader.pages))  # 最多显示前3页
+                
+                # 提取文本
+                text_content = []
+                for i in range(pages):
+                    page = reader.pages[i]
+                    text = page.extract_text()
+                    if text:
+                        # 限制每页的文本长度
+                        preview_text = text[:1000] + "..." if len(text) > 1000 else text
+                        text_content.append({"page": i+1, "content": preview_text})
+                
+                # 记录操作日志
+                log_admin_operation(admin_id, "查询", f"预览了PDF文件{file_name}")
+                
+                # 返回PDF预览数据
+                return {
+                    "success": True, 
+                    "file_type": "pdf",
+                    "total_pages": len(reader.pages),
+                    "preview_pages": pages,
+                    "content": text_content
+                }
+            except Exception as e:
+                logger.error(f"PDF预览失败: {str(e)}")
+                return {"success": False, "message": f"无法预览PDF文件: {str(e)}"}
+                
+        elif file_ext in ['.docx', '.doc']:
+            # Word文档预览
+            try:
+                try:
+                    import docx2txt
+                except ImportError:
+                    return {"success": False, "message": "服务器缺少docx2txt库，无法预览Word文档"}
+                
+                # 提取文本
+                text = docx2txt.process(file_path)
+                
+                # 限制预览长度
+                preview_text = text[:2000] + "..." if len(text) > 2000 else text
     except HTTPException:
         raise
     except Exception as e:

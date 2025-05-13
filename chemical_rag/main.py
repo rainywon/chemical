@@ -74,6 +74,6 @@ if __name__ == '__main__':
     # 启动应用并监听 127.0.0.1:8000 端口，启用自动重载功能
     uvicorn.run("main:app",
                 host="127.0.0.1",
-                port=8000,
+                port=8001,
                 reload=False,  # 关闭自动重载
                 )

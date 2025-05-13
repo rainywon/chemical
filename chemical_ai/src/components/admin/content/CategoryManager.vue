@@ -49,6 +49,7 @@
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 支持上传Excel文件(.xlsx, .xls)，单个文件不超过10MB</li>
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 最多可选择5个文件同时上传</li>
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 上传前请检查文件格式是否正确</li>
+                <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 上传后将自动更新知识库向量数据库，便于AI查询</li>
               </ul>
             </div>
           </el-alert>
@@ -105,17 +106,61 @@
             <el-empty description="暂无选择文件" :image-size="80"></el-empty>
           </div>
         </div>
+        
+        <!-- 上传状态和结果反馈 -->
+        <div v-if="uploadStatus.isUploading || uploadStatus.completed" class="upload-status-container">
+          <el-divider>上传状态</el-divider>
+          
+          <div v-if="uploadStatus.isUploading" class="upload-progress">
+            <el-progress 
+              :percentage="uploadStatus.progress" 
+              :status="uploadStatus.progress < 100 ? '' : 'success'"
+              :stroke-width="15"
+              :format="uploadStatus.progress === 100 ? () => '上传完成' : (p) => `${p}%`"
+            ></el-progress>
+            <div class="upload-status-message">
+              {{ uploadStatus.message || '文件上传中...' }}
+            </div>
+          </div>
+          
+          <div v-if="uploadStatus.completed" class="upload-result">
+            <el-alert
+              :title="uploadStatus.success ? '上传成功' : '上传出现问题'"
+              :type="uploadStatus.success ? 'success' : 'warning'"
+              :closable="false"
+              show-icon
+            >
+              <div class="upload-result-details">
+                <p>{{ uploadStatus.message }}</p>
+                
+                <!-- 向量数据库错误信息 -->
+                <div v-if="uploadStatus.vectorDbErrors && uploadStatus.vectorDbErrors.length > 0" class="vector-db-errors">
+                  <el-collapse>
+                    <el-collapse-item title="查看向量数据库更新详情">
+                      <ul class="error-list">
+                        <li v-for="(error, index) in uploadStatus.vectorDbErrors" :key="index">
+                          {{ error }}
+                        </li>
+                      </ul>
+                    </el-collapse-item>
+                  </el-collapse>
+                </div>
+              </div>
+            </el-alert>
+          </div>
+        </div>
       </div>
       <template #footer>
         <span class="dialog-footer">
-          <el-button @click="uploadDialogVisible = false">取消</el-button>
+          <el-button @click="uploadDialogVisible = false" :disabled="uploadStatus.isUploading">取消</el-button>
           <el-button 
             type="success" 
             :icon="UploadFilled" 
             @click="uploadSelectedFiles" 
-            :disabled="!selectedFiles.length"
+            :disabled="!selectedFiles.length || uploadStatus.isUploading"
+            :loading="uploadStatus.isUploading"
           >
-            上传到知识库
+            {{ uploadStatus.isUploading ? '上传中...' : '上传到知识库' }}
           </el-button>
         </span>
       </template>
@@ -389,9 +434,10 @@ import {
   FolderOpened,
   Filter,
   RefreshLeft,
-  InfoFilled
+  InfoFilled,
+  DocumentCopy
 } from '@element-plus/icons-vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import axios from 'axios';
 import { API_BASE_URL } from '../../../config.js';
 
@@ -427,6 +473,16 @@ const previewColumns = ref([]);
 
 // 文件上传对话框
 const uploadDialogVisible = ref(false);
+
+// 上传状态
+const uploadStatus = ref({
+  isUploading: false,
+  completed: false,
+  progress: 0,
+  message: '',
+  success: true,
+  vectorDbErrors: []
+});
 
 // API 基础路径
 const baseApiUrl = API_BASE_URL;
@@ -546,6 +602,16 @@ const uploadSelectedFiles = async () => {
   }
   
   try {
+    // 重置上传状态
+    uploadStatus.value = {
+      isUploading: true,
+      completed: false,
+      progress: 0,
+      message: '正在准备上传文件...',
+      success: true,
+      vectorDbErrors: []
+    };
+    
     // 获取token
     const token = localStorage.getItem('token');
     
@@ -556,27 +622,62 @@ const uploadSelectedFiles = async () => {
     });
     
     // 发送上传请求
+    uploadStatus.value.message = '文件上传中，正在处理...';
+    uploadStatus.value.progress = 30;
+    
     const response = await axios.post(`${baseApiUrl}/admin/content/knowledge-files/upload`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
         'Authorization': `Bearer ${token}`
+      },
+      onUploadProgress: progressEvent => {
+        // 计算上传进度（最大80%，剩余20%留给向量数据库处理）
+        const percentCompleted = Math.min(80, Math.round((progressEvent.loaded * 100) / progressEvent.total));
+        uploadStatus.value.progress = percentCompleted;
+        if (percentCompleted >= 80) {
+          uploadStatus.value.message = '文件已上传，正在更新知识库向量数据库...';
+        }
       }
     });
     
+    // 处理响应
     if (response.data.success) {
-      ElMessage.success(response.data.message);
-      // 上传成功后刷新文件列表
-      loadFileList();
+      // 根据向量数据库更新结果设置不同的状态
+      uploadStatus.value.progress = 100;
+      uploadStatus.value.completed = true;
+      uploadStatus.value.success = true;
+      uploadStatus.value.message = response.data.message;
+      
+      // 处理向量数据库错误信息
+      if (response.data.vector_db_errors) {
+        uploadStatus.value.vectorDbErrors = response.data.vector_db_errors;
+      }
+      
       // 清空选择的文件
       selectedFiles.value = [];
-      // 关闭上传对话框
-      uploadDialogVisible.value = false;
+      
+      // 刷新文件列表
+      setTimeout(() => {
+        loadFileList();
+      }, 1000);
+      
+      ElMessage.success(response.data.message);
     } else {
+      uploadStatus.value.progress = 100;
+      uploadStatus.value.completed = true;
+      uploadStatus.value.success = false;
+      uploadStatus.value.message = response.data.message || '上传文件失败';
       ElMessage.error(response.data.message || '上传文件失败');
     }
   } catch (error) {
     console.error('上传文件出错:', error);
+    uploadStatus.value.progress = 100;
+    uploadStatus.value.completed = true;
+    uploadStatus.value.success = false;
+    uploadStatus.value.message = `上传文件失败: ${error.response?.data?.detail || error.message}`;
     ElMessage.error(`上传文件失败: ${error.response?.data?.detail || error.message}`);
+  } finally {
+    uploadStatus.value.isUploading = false;
   }
 };
 
@@ -689,31 +790,7 @@ const downloadFile = (file) => {
   }
 };
 
-// 删除单个文件
-const deleteFile = async (file) => {
-  try {
-    // 获取token
-    const token = localStorage.getItem('token');
-    
-    // 发送删除请求
-    const response = await axios.delete(`${baseApiUrl}/admin/content/knowledge-files/${file.fileName}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    
-    if (response.data.success) {
-      ElMessage.success(response.data.message);
-      // 删除成功后刷新文件列表
-      loadFileList();
-    } else {
-      ElMessage.error(response.data.message || '删除文件失败');
-    }
-  } catch (error) {
-    console.error('删除文件出错:', error);
-    ElMessage.error(`删除文件失败: ${error.response?.data?.detail || error.message}`);
-  }
-};
+// 删除单个文件const deleteFile = async (file) => {  try {    // 显示确认对话框    await ElMessageBox.confirm(      `确定要删除文件 "${file.fileName}" 吗？此操作将同时从向量数据库中移除相关数据。`,      '删除确认',      {        confirmButtonText: '确定删除',        cancelButtonText: '取消',        type: 'warning',      }    );        // 显示loading    const loadingInstance = ElLoading.service({      text: '正在删除文件并清理向量数据库...',      background: 'rgba(0, 0, 0, 0.7)'    });    // 获取token    const token = localStorage.getItem('token');        // 发送删除请求    const response = await axios.delete(`${baseApiUrl}/admin/content/knowledge-files/${file.fileName}`, {      headers: {        'Authorization': `Bearer ${token}`      }    });        if (response.data.success) {      // 根据响应内容显示不同的成功消息      if (response.data.vector_db_error) {        ElMessage({          type: 'warning',          message: response.data.message,          duration: 5000,          showClose: true        });        console.error('向量数据库清理错误:', response.data.vector_db_error);      } else {        ElMessage.success(response.data.message);      }            // 删除成功后刷新文件列表      loadFileList();    } else {      ElMessage.error(response.data.message || '删除文件失败');    }  } catch (error) {    if (error === 'cancel') {      return; // 用户取消删除，不做处理    }    console.error('删除文件出错:', error);    ElMessage.error(`删除文件失败: ${error.response?.data?.detail || error.message}`);  } finally {    // 关闭loading    ElLoading.service().close();  }};
 
 // 处理批量删除
 const handleBatchDelete = () => {
@@ -725,42 +802,7 @@ const handleBatchDelete = () => {
   batchDeleteDialogVisible.value = true;
 };
 
-// 确认批量删除
-const confirmBatchDelete = async () => {
-  try {
-    // 获取token
-    const token = localStorage.getItem('token');
-    
-    // 获取所有选中文件的ID
-    const fileIds = multipleSelection.value.map(file => file.id);
-    
-    // 构建请求数据
-    const requestData = {
-      file_ids: fileIds
-    };
-    
-    // 发送批量删除请求
-    const response = await axios.post(`${baseApiUrl}/admin/content/knowledge-files/batch-delete`, requestData, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    
-    if (response.data.success) {
-      ElMessage.success(response.data.message);
-      // 删除成功后刷新文件列表
-      loadFileList();
-      // 关闭对话框并清空选择
-      batchDeleteDialogVisible.value = false;
-      multipleSelection.value = [];
-    } else {
-      ElMessage.error(response.data.message || '批量删除文件失败');
-    }
-  } catch (error) {
-    console.error('批量删除文件出错:', error);
-    ElMessage.error(`批量删除文件失败: ${error.response?.data?.detail || error.message}`);
-  }
-};
+// 确认批量删除const confirmBatchDelete = async () => {  try {    // 显示loading    const loadingInstance = ElLoading.service({      text: '正在批量删除文件并清理向量数据库...',      background: 'rgba(0, 0, 0, 0.7)'    });        // 获取token    const token = localStorage.getItem('token');        // 获取所有选中文件的ID    const fileIds = multipleSelection.value.map(file => file.id);        // 构建请求数据    const requestData = {      file_ids: fileIds    };        // 发送批量删除请求    const response = await axios.post(`${baseApiUrl}/admin/content/knowledge-files/batch-delete`, requestData, {      headers: {        'Authorization': `Bearer ${token}`      }    });        if (response.data.success) {      // 处理向量数据库操作结果      if (response.data.vector_db_error) {        ElMessage({          type: 'warning',          message: response.data.message,          duration: 5000,          showClose: true        });        console.error('向量数据库清理错误:', response.data.vector_db_error);      } else {        ElMessage.success(response.data.message);      }            // 删除成功后刷新文件列表      loadFileList();      // 关闭对话框并清空选择      batchDeleteDialogVisible.value = false;      multipleSelection.value = [];    } else {      ElMessage.error(response.data.message || '批量删除文件失败');    }  } catch (error) {    console.error('批量删除文件出错:', error);    ElMessage.error(`批量删除文件失败: ${error.response?.data?.detail || error.message}`);  } finally {    // 关闭loading    ElLoading.service().close();  }};
 
 // 分页处理
 const handleSizeChange = (size) => {
@@ -1417,5 +1459,64 @@ const resetFilters = () => {
   outline: none !important;
   border-color: #409eff !important;
   box-shadow: none !important;
+}
+
+/* 添加上传状态样式 */
+.upload-status-container {
+  margin-top: 20px;
+  padding: 15px;
+  border-radius: 8px;
+  background-color: #f8f9fa;
+  border: 1px solid #ebeef5;
+}
+
+.upload-progress {
+  margin-top: 10px;
+}
+
+.upload-status-message {
+  margin-top: 8px;
+  color: #606266;
+  font-size: 14px;
+  text-align: center;
+}
+
+.upload-result {
+  margin-top: 10px;
+}
+
+.upload-result-details {
+  padding: 10px 0;
+}
+
+.vector-db-errors {
+  margin-top: 10px;
+  border-top: 1px dashed #e6e6e6;
+  padding-top: 10px;
+}
+
+.error-list {
+  margin: 10px 0;
+  padding-left: 20px;
+  color: #f56c6c;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.error-list li {
+  margin-bottom: 5px;
+}
+
+:deep(.el-collapse) {
+  border: none;
+  background-color: transparent;
+}
+
+:deep(.el-collapse-item__header) {
+  font-size: 14px;
+  color: #409eff;
+  background-color: transparent;
+  border-bottom: none;
+  padding: 8px 0;
 }
 </style>
