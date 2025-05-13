@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # 导入线程�
 from tqdm import tqdm  # 导入进度条模块，用于显示加载进度
 from config import Config  # 导入配置类，用于加载配置参数
 import shutil  # 用于文件操作
+import pandas as pd  # 导入pandas用于创建Excel文件
+import re  # 导入正则表达式模块，用于处理文本
 
 from pdf_cor_extractor.pdf_ocr_extractor import PDFProcessor
 
@@ -507,361 +509,279 @@ class VectorDBBuilder:
 
     def _split_by_section(self, text: str) -> List[Tuple[str, str, Dict]]:
         """
-        根据章节标题（如1、1.1、1.1.1格式）将文本分割成段落，
-        同时将一级标题与其直接下属内容合并为一个块
+        根据章节标题将文本分割成有组织的段落
         
         Args:
             text: 完整的文档文本
-            
+                
         Returns:
             List[Tuple[str, str, Dict]]: 返回章节标题、章节内容和元数据的元组列表
         """
         logger.info("开始按章节结构进行文档分块...")
         import re
         
-        # 合并所有模式
-        patterns = {
-            # 标准格式
-            'standard': [
-                # 第一级到第四级标题
-                r'^\s*(\d+)\.?\s+([^\n]+)$',
-                r'^\s*(\d+\.\d+)\.?\s+([^\n]+)$',
-                r'^\s*(\d+\.\d+\.\d+)\.?\s+([^\n]+)$',
-                r'^\s*(\d+\.\d+\.\d+\.\d+)\.?\s+([^\n]+)$',
-                # 中文序号和括号序号标题
-                r'^\s*([一二三四五六七八九十]+)[、.．]\s+([^\n]+)$',
-                r'^\s*[（(]([一二三四五六七八九十]+)[)）]\s+([^\n]+)$',
-                # 附录格式
-                r'^\s*(附录\s*[A-Za-z])[.．、]?\s*([^\n]+)?$'
-            ],
+        # 识别各种标题格式的正则表达式
+        patterns = [
+            # 标准格式（一级到四级标题）
+            r'^\s*(\d+)\.?\s+([^\n]+)$',                  # "1. 标题"
+            r'^\s*(\d+\.\d+)\.?\s+([^\n]+)$',             # "1.1 标题"
+            r'^\s*(\d+\.\d+\.\d+)\.?\s+([^\n]+)$',        # "1.1.1 标题"
+            r'^\s*(\d+\.\d+\.\d+\.\d+)\.?\s+([^\n]+)$',   # "1.1.1.1 标题"
+            # 中文序号
+            r'^\s*([一二三四五六七八九十]+)[、.．]\s+([^\n]+)$',     # "一、标题"
+            r'^\s*[（(]([一二三四五六七八九十]+)[)）]\s+([^\n]+)$',  # "（一）标题"
             # 无空格格式
-            'no_space': [
-                r'^\s*(\d+)\.([\S].*?)$',
-                r'^\s*(\d+\.\d+)([\S].*?)$',
-                r'^\s*(\d+\.\d+\.\d+)([\S].*?)$',
-                r'^\s*(\d+\.\d+\.\d+\.\d+)([\S].*?)$'
-            ],
-            # 独立章节编号
-            'standalone': [
-                r'^\s*(\d+)\s*$',
-                r'^\s*(\d+)\.?\s*$',
-                r'^\s*(\d+\.\d+)\.?\s*$',
-                r'^\s*(\d+\.\d+\.\d+)\.?\s*$',
-                r'^\s*(\d+\.\d+\.\d+\.\d+)\.?\s*$'
-            ],
+            r'^\s*(\d+)\.([\S].*?)$',                     # "1.标题"
+            r'^\s*(\d+\.\d+)([\S].*?)$',                  # "1.1标题"
+            # 附录格式
+            r'^\s*(附录\s*[A-Za-z])[.．、]?\s*([^\n]+)?$',  # "附录A 标题"
             # 事故报告特有格式
-            'accident_report': [
-                # 事故报告中的中文编号（一、二、三、四、五等）
-                r'^\s*(一|二|三|四|五|六|七|八|九|十|[一二三四五六七八九十]{2})\s*[、,:：.．]\s*(.+)$',
-                # 事故报告中的"1."、"2."格式
-                r'^\s*(\d+)\s*[、,:：.．]\s*(.+)$',
-                # 日期格式标题（如"2014年1月9日事故情况"）
-                r'^(\d{4}年\d{1,2}月\d{1,2}日.*?)[:：]?\s*(.*)$',
-                # "（一）、（二）"格式
-                r'^\s*[（(]\s*(一|二|三|四|五|六|七|八|九|十|[一二三四五六七八九十]{2})\s*[)）]\s*[、,:：.．]?\s*(.+)$'
-            ],
-            # 新增: 缺少标点的章节标题格式
-            'missing_punctuation': [
-                # 识别类似 "9 1.1", "9 1.2" 这样缺少标点的标题
-                r'^\s*(\d+)\s+(\d+\.\d+)(?:\s+|$)(.*)$',
-                r'^\s*(\d+)\s+(\d+)(?:\s+|$)(.*)$',
-                # 识别类似 "9 1.41" 这样的格式
-                r'^\s*(\d+)\s+(\d+\.\d+\d+)(?:\s+|$)(.*)$',
-            ]
-        }
+            r'^\s*(一|二|三|四|五|六|七|八|九|十|[一二三四五六七八九十]{2})\s*[、,:：.．]\s*(.+)$',
+            r'^\s*(\d+)\s*[、,:：.．]\s*(.+)$',
+            r'^(\d{4}年\d{1,2}月\d{1,2}日.*?)[:：]?\s*(.*)$'
+        ]
         
-        # 分割文本为行
+        # 初始化
         lines = text.split('\n')
-        
-        # 初始化变量
         sections = []
-        current = {
-            "num": "",
-            "title": "",
-            "content": [],
-            "level": 0,
-            "children": []  # 存储子章节
-        }
-        found_first_section = False
         
-        # 用于日期时间检测的正则表达式
+        # 用于事故报告特征检测
         date_time_pattern = re.compile(r'(\d{4}年\d{1,2}月\d{1,2}日(?:\s*[上下]午)?\s*\d{1,2}[时:](?:\d{1,2}分?)?)')
-        
-        # 事故报告特征的检测计数
         accident_report_features = 0
         
-        # 临时存储区，用于合并一级标题与其子项
-        pending_main_sections = []
-        current_main_section = None
-        last_section_level = 0
+        # 按照章节层级组织内容 - 更简单的方法
+        all_sections = []  # 存储所有章节，包括一级和子章节
+        current_section = {"title": "", "content": [], "level": 0, "children": []}
         
+        # 逐行处理文本
         line_num = 0
         while line_num < len(lines):
             line = lines[line_num].strip()
             line_num += 1
             
-            # 检测是否包含日期时间（事故报告特征）
+            # 检测事故报告特征（日期时间格式）
             if date_time_pattern.search(line):
                 accident_report_features += 1
             
-            # 处理空行
-            if not line:
-                if current["content"]:
-                    current["content"].append("")
-                continue
+            # 匹配标题
+            is_heading = False
+            heading_level = 0
+            heading_num = ""
+            heading_title = ""
             
-            # 识别标题变量
-            match_info = {
-                "is_header": False,
-                "level": 0,
-                "num": "",
-                "title": "",
-                "next_line_used": False,
-                "pattern_type": ""
-            }
-            
-            # 检查各种标题模式
-            for pattern_type, pattern_list in patterns.items():
-                if match_info["is_header"]:
-                    break
+            for i, pattern in enumerate(patterns):
+                match = re.match(pattern, line)
+                if match:
+                    is_heading = True
                     
-                for i, pattern in enumerate(pattern_list):
-                    match = re.match(pattern, line)
-                    if not match:
-                        continue
-                        
-                    match_info["is_header"] = True
-                    match_info["level"] = i + 1
-                    
-                    # 特殊处理缺少标点的模式
-                    if pattern_type == 'missing_punctuation':
-                        if len(match.groups()) >= 2:
-                            # 对于缺少标点的模式，组合主标题和子标题编号
-                            main_num = match.group(1)
-                            sub_num = match.group(2)
-                            match_info["num"] = f"{main_num}.{sub_num}"
-                            
-                            # 如果有标题文本，则使用；否则只使用编号
-                            if len(match.groups()) >= 3 and match.group(3):
-                                match_info["title"] = match.group(3).strip()
-                            else:
-                                match_info["title"] = f"{main_num}.{sub_num}"
-                        else:
-                            match_info["num"] = match.group(1)
-                            match_info["title"] = match_info["num"]
-                    else:
-                        # 常规模式处理
-                        match_info["num"] = match.group(1)
-                        match_info["pattern_type"] = pattern_type
-                        
-                        # 处理标题文本
-                        if len(match.groups()) > 1 and match.group(2):
-                            match_info["title"] = match.group(2).strip()
-                        else:
-                            match_info["title"] = match_info["num"]
-                    
-                    # 事故报告特有的处理
-                    if pattern_type == 'accident_report':
-                        # 增加事故报告特征计数
-                        accident_report_features += 1
-                        # 为中文数字设置合适的级别
-                        if re.match(r'^[一二三四五六七八九十]{1,2}$', match_info["num"]):
-                            match_info["level"] = 1  # 一级标题（一、二、三...）
-                        elif re.match(r'^\d+$', match_info["num"]):
-                            match_info["level"] = 2  # 二级标题（1、2、3...）
-                    
-                    # 对于独立编号格式，检查下一行是否为标题内容
-                    if pattern_type == 'standalone':
-                        if line_num < len(lines):
-                            # 只向前查看最多3行
-                            for look_ahead in range(line_num, min(line_num + 3, len(lines))):
-                                next_line = lines[look_ahead].strip()
-                                if not next_line:
-                                    continue
-                                
-                                # 确认下一行不是标题
-                                is_next_header = False
-                                for ptype in patterns.values():
-                                    for p in ptype:
-                                        if re.match(p, next_line):
-                                            is_next_header = True
-                                            break
-                                    if is_next_header:
-                                        break
-                                
-                                if not is_next_header and len(next_line) < 50:
-                                    match_info["title"] = next_line
-                                    match_info["next_line_used"] = True
-                                    line_num = look_ahead + 1
+                    # 根据模式确定标题级别
+                    if i < 4:  # 标准数字格式 (1., 1.1., etc)
+                        heading_level = i + 1
+                    elif i < 6:  # 中文序号 (一、, (一))
+                        heading_level = 1
+                    elif i < 8:  # 无空格格式 (1.标题, 1.1标题)
+                        heading_level = 1 if "." not in match.group(1) else 2
+                    elif i == 8:  # 附录格式
+                        heading_level = 1
+                    elif i == 9:  # 中文数字标题 (一、二、三)
+                        heading_level = 1
+                    elif i == 10:  # 数字序号标题 (1、2、3)
+                        # 检查是否是常见的"1、2、3"这样的事故报告子项编号
+                        if re.match(r'^\s*[1-9](\d*)\s*[、,:：.．]', line):
+                            # 查看前面的标题是否有中文编号(一、二、三等)或罗马数字
+                            chinese_or_roman_header = False
+                            for prev_section in all_sections:
+                                prev_num = prev_section.get("num", "")
+                                if re.match(r'^[一二三四五六七八九十]+$', prev_num) or \
+                                   re.match(r'^[IVX]+$', prev_num):
+                                    chinese_or_roman_header = True
                                     break
+                            
+                            if chinese_or_roman_header:
+                                heading_level = 2  # 如果前面有中文标题，这通常是二级编号
+                            else:
+                                heading_level = 1  # 否则可能是主要编号
+                        else:
+                            heading_level = 1
+                    else:  # 其他事故报告格式 (日期等)
+                        heading_level = 2
                     
+                    # 增加事故报告特征计数(如果是事故报告格式)
+                    if i >= 9:
+                        accident_report_features += 1
+                    
+                    heading_num = match.group(1)
+                    heading_title = match.group(2) if len(match.groups()) > 1 and match.group(2) else heading_num
                     break
             
-            # 检查是否找到第一个一级标题
-            if match_info["is_header"] and not found_first_section and match_info["level"] == 1:
-                found_first_section = True
-            
-            # 处理章节标题行
-            if match_info["is_header"] and (found_first_section or "附录" in match_info["num"] or accident_report_features > 2):
-                # 当识别到标题时，保存当前的章节
-                if current["num"] and current["content"]:
-                    content = "\n".join(current["content"])
+            # 处理标题和内容
+            if is_heading:
+                section_title = f"{heading_num} {heading_title}"
+                
+                # 保存当前章节
+                if current_section["title"]:
+                    content = "\n".join(current_section["content"])
                     metadata = {
-                        "section_num": current["num"],
-                        "section_title": current["title"],
-                        "section_level": current["level"],
+                        "section_num": current_section.get("num", ""),
+                        "section_title": current_section.get("text", ""),
+                        "section_level": current_section["level"],
                         "section_type": "accident_report" if accident_report_features > 2 else "standard"
                     }
                     
-                    # 判断是否是一级标题
-                    is_main_heading = current["level"] == 1
-                    
-                    # 如果是一级标题，存储到主章节对象中
-                    if is_main_heading:
-                        if current_main_section:
-                            # 将当前主章节添加到输出列表
-                            pending_main_sections.append(current_main_section)
-                        
-                        # 创建新的主章节对象
-                        current_main_section = {
-                            "title": current["num"] + " " + current["title"],
-                            "content": content,
-                            "metadata": metadata,
-                            "children": []  # 子章节列表
-                        }
-                    # 如果是子标题且存在当前主章节，则添加到子章节列表中
-                    elif current_main_section:
-                        current_main_section["children"].append({
-                            "title": current["num"] + " " + current["title"],
-                            "content": content,
-                            "metadata": metadata
-                        })
-                    # 如果是子标题但没有主章节（例如文档开始就是子章节），则直接添加到输出列表
-                    else:
-                        sections.append((current["num"] + " " + current["title"], content, metadata))
+                    # 保存当前章节
+                    finalized_section = {
+                        "title": current_section["title"],
+                        "content": content,
+                        "metadata": metadata,
+                        "level": current_section["level"],
+                        "num": current_section.get("num", ""),
+                        "children": current_section.get("children", [])
+                    }
+                    all_sections.append(finalized_section)
                 
                 # 创建新章节
-                current = {
-                    "num": match_info["num"],
-                    "title": match_info["title"],
-                    "level": match_info["level"],
-                    "content": [f"{match_info['num']} {match_info['title']}"] if not match_info["next_line_used"] else [f"{match_info['num']} {match_info['title']}"]
-                }
-                
-                # 记录上一个章节的级别
-                last_section_level = match_info["level"]
-            else:
-                # 常规内容行
-                if current["content"] or not found_first_section:
-                    current["content"].append(line)
-                # 如果是首段内容且还没有章节，则创建一个"概述"章节
-                elif not current["content"] and not sections and len(line) > 20:
-                    current = {
-                        "num": "概述",
-                        "title": "",
-                        "level": 0,
-                        "content": [line]
-                    }
-        
-        # 处理最后一个章节
-        if current["num"] and current["content"]:
-            content = "\n".join(current["content"])
-            metadata = {
-                "section_num": current["num"],
-                "section_title": current["title"],
-                "section_level": current["level"],
-                "section_type": "accident_report" if accident_report_features > 2 else "standard"
-            }
-            
-            # 判断是否是一级标题
-            is_main_heading = current["level"] == 1
-            
-            if is_main_heading:
-                if current_main_section:
-                    pending_main_sections.append(current_main_section)
-                
-                current_main_section = {
-                    "title": current["num"] + " " + current["title"],
-                    "content": content,
-                    "metadata": metadata,
+                current_section = {
+                    "title": section_title,
+                    "num": heading_num,
+                    "text": heading_title,
+                    "content": [line],  # 包含标题行
+                    "level": heading_level,
                     "children": []
                 }
-            elif current_main_section:
-                current_main_section["children"].append({
-                    "title": current["num"] + " " + current["title"],
-                    "content": content,
-                    "metadata": metadata
-                })
             else:
-                sections.append((current["num"] + " " + current["title"], content, metadata))
+                # 添加到当前章节内容
+                if current_section["content"] or line:  # 避免添加空行到空章节
+                    current_section["content"].append(line)
+        
+        # 处理最后一个章节
+        if current_section["title"]:
+            content = "\n".join(current_section["content"])
+            metadata = {
+                "section_num": current_section.get("num", ""),
+                "section_title": current_section.get("text", ""),
+                "section_level": current_section["level"],
+                "section_type": "accident_report" if accident_report_features > 2 else "standard"
+            }
+            finalized_section = {
+                "title": current_section["title"],
+                "content": content,
+                "metadata": metadata,
+                "level": current_section["level"],
+                "num": current_section.get("num", ""),
+                "children": []
+            }
+            all_sections.append(finalized_section)
+        
+        # 构建章节层级关系 - 以更简单、更可靠的方式
+        # 按顺序处理，将子章节关联到最近的主章节
+        section_hierarchy = []
+        current_main = None
+        
+        for section in all_sections:
+            if section["level"] == 1:
+                # 如果存在之前的主章节，添加到结果
+                if current_main:
+                    section_hierarchy.append(current_main)
+                
+                # 创建新的主章节
+                current_main = section
+                current_main["children"] = []
+            elif section["level"] > 1 and current_main:
+                # 添加子章节到当前主章节
+                current_main["children"].append(section)
+            else:
+                # 没有关联的主章节，直接添加
+                section_hierarchy.append(section)
         
         # 添加最后一个主章节
-        if current_main_section:
-            pending_main_sections.append(current_main_section)
+        if current_main and current_main not in section_hierarchy:
+            section_hierarchy.append(current_main)
         
-        # 处理所有待处理的主章节及其子章节，合并内容
-        for main_section in pending_main_sections:
-            if main_section["children"]:
-                # 合并主章节内容和所有子章节内容
-                combined_content = main_section["content"] + "\n\n"
+        # 最终处理：合并主章节和子章节的内容，生成结果
+        for section in section_hierarchy:
+            if section.get("children") and len(section["children"]) > 0:
+                # 合并主章节和所有子章节内容
+                full_content = section["content"] + "\n\n"
                 
-                for child in main_section["children"]:
-                    combined_content += child["content"] + "\n\n"
+                for child in section["children"]:
+                    child_content = child.get("content", "")
+                    if child_content:
+                        full_content += child_content + "\n\n"
                 
-                # 保留主章节的元数据，但添加包含子章节信息
-                main_section["metadata"]["contains_subsections"] = True
-                main_section["metadata"]["subsection_count"] = len(main_section["children"])
+                # 更新元数据
+                section["metadata"]["contains_subsections"] = True
+                section["metadata"]["subsection_count"] = len(section["children"])
                 
-                # 将合并后的章节添加到输出列表
-                sections.append((main_section["title"], combined_content.strip(), main_section["metadata"]))
+                # 添加到最终结果
+                sections.append((section["title"], full_content.strip(), section["metadata"]))
             else:
-                # 如果没有子章节，则直接添加主章节
-                sections.append((main_section["title"], main_section["content"], main_section["metadata"]))
+                # 没有子章节的章节直接添加
+                sections.append((section["title"], section["content"], section["metadata"]))
         
-        # 如果全文没有识别到章节，但有内容且包含事故报告特征
-        if not sections and accident_report_features > 1:
-            # 使用简单段落分割（通过连续空行）
-            paragraphs = []
-            current_para = []
-            
-            for line in lines:
-                line = line.strip()
-                if line:
-                    current_para.append(line)
-                elif current_para:  # 空行且当前段落有内容
+        # 特殊情况处理：没有识别到章节结构的文档
+        if not sections and text.strip():
+            # 如果检测到事故报告特征，使用段落分割但合并成更大的块
+            if accident_report_features > 1:
+                logger.info("未检测到章节结构，但发现事故报告特征，使用段落分割并合并相关段落...")
+                paragraphs = []
+                current_para = []
+                
+                # 按空行分割段落
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        current_para.append(line)
+                    elif current_para:  # 空行且当前段落有内容
+                        paragraphs.append("\n".join(current_para))
+                        current_para = []
+                
+                # 添加最后一个段落
+                if current_para:
                     paragraphs.append("\n".join(current_para))
-                    current_para = []
-            
-            # 添加最后一个段落
-            if current_para:
-                paragraphs.append("\n".join(current_para))
-            
-            # 将段落转换为章节
-            for i, paragraph in enumerate(paragraphs):
-                if len(paragraph) > 30:  # 只处理较长的段落
-                    # 尝试从段落中提取标题
-                    first_line = paragraph.split("\n")[0] if "\n" in paragraph else ""
-                    title = first_line[:50] if len(first_line) > 10 else f"段落{i+1}"
-                    
-                    metadata = {
-                        "section_num": f"P{i+1}",
-                        "section_title": title,
-                        "section_level": 1,
-                        "section_type": "accident_report_paragraph"
-                    }
-                    sections.append((f"P{i+1} {title}", paragraph, metadata))
+                
+                # 每3个段落合并为一组，避免过度分割
+                merged_paragraphs = []
+                for i in range(0, len(paragraphs), 3):
+                    group = paragraphs[i:i+3]
+                    merged_paragraphs.append("\n\n".join(group))
+                
+                # 将合并后的段落组转换为章节
+                for i, paragraph in enumerate(merged_paragraphs):
+                    if len(paragraph) > 30:  # 只处理较长的段落
+                        # 尝试从段落中提取标题
+                        first_line = paragraph.split("\n")[0] if "\n" in paragraph else ""
+                        title = first_line[:50] if len(first_line) > 10 else f"段落组{i+1}"
+                        
+                        metadata = {
+                            "section_num": f"PG{i+1}",
+                            "section_title": title,
+                            "section_level": 1,
+                            "section_type": "accident_report_paragraph_group"
+                        }
+                        sections.append((f"PG{i+1} {title}", paragraph, metadata))
+            else:
+                # 普通文档：整个文档作为一个章节
+                logger.info("未检测到章节结构，将整个文档作为一个章节...")
+                first_line = text.strip().split('\n')[0][:50]
+                metadata = {
+                    "section_level": 0, 
+                    "section_title": first_line,
+                    "section_type": "no_section"
+                }
+                sections.append((first_line, text, metadata))
         
-        # 输出结果摘要
-        logger.info(f"按章节结构分块完成，共找到 {len(sections)} 个章节")
-        if sections:
-            for i, (title, _, meta) in enumerate(sections[:min(5, len(sections))]):
-                section_type = meta.get("section_type", "standard")
-                contains_subsections = meta.get("contains_subsections", False)
-                subsection_str = f"，包含 {meta.get('subsection_count', 0)} 个子章节" if contains_subsections else ""
-                logger.info(f"  • 章节 {i+1}: {title} (级别: {meta['section_level']}, 类型: {section_type}{subsection_str})")
+        # 打印详细信息便于调试
+        if not sections:
+            logger.warning("未能识别任何章节！检查文本结构或标题格式...")
+        else:
+            logger.info(f"按章节结构分块完成，共找到 {len(sections)} 个章节块")
             
-            if len(sections) > 5:
-                logger.info(f"  ... 以及 {len(sections)-5} 个其他章节")
+            # 打印主要章节和子章节关系
+            for i, (title, content, meta) in enumerate(sections):
+                if meta.get("contains_subsections"):
+                    logger.info(f"  • 章节 {i+1}: {title} (包含 {meta.get('subsection_count', 0)} 个子章节)")
+                else:
+                    logger.info(f"  • 章节 {i+1}: {title}")
         
         return sections
 
@@ -1258,6 +1178,190 @@ class VectorDBBuilder:
             logger.info(f"✅ CSV格式的分块摘要已保存至: {csv_file}")
         except Exception as e:
             logger.error(f"保存CSV格式的分块摘要失败: {str(e)}")
+            
+        # 保存到Excel文件
+        self.save_chunks_to_excel(chunks)
+
+    def save_chunks_to_excel(self, chunks: List[Document]):
+        """将文档分块保存到Excel文件中
+        
+        每个源文件生成一个Excel文件，包含原文内容和入库内容两列
+        
+        Args:
+            chunks: 文档分块列表
+        """
+        if not chunks:
+            logger.info("没有文本块可供保存到Excel")
+            return
+            
+        # 创建输出目录
+        output_dir = Path("./chunks")  # 使用相对路径，在当前工作目录下创建chunks文件夹
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"开始将文本块保存到Excel文件，输出目录: {output_dir}")
+        
+        # 按文件分组文本块
+        file_chunks = {}
+        for chunk in chunks:
+            source = chunk.metadata.get("source", "未知来源")
+            if source not in file_chunks:
+                file_chunks[source] = []
+            file_chunks[source].append(chunk)
+        
+        # 处理每个文件的分块
+        for file_path, file_chunks_list in file_chunks.items():
+            file_name = Path(file_path).name if isinstance(file_path, str) else "未知文件"
+            excel_file = output_dir / f"{file_name}.xlsx"
+            
+            # 创建DataFrame存储数据
+            data = []
+            for chunk in file_chunks_list:
+                # 获取原始文本
+                raw_text = chunk.page_content
+                
+                # 去除章节编号以创建原文内容
+                cleaned_text = raw_text
+                
+                # 扩展的章节编号匹配模式
+                section_patterns = [
+                    # 中文序号
+                    r'^\s*[一二三四五六七八九十百千万零]+[、.．]\s*',  # 匹配"一、"等中文序号
+                    r'^\s*[（(（][一二三四五六七八九十]+[)））]\s*',  # 匹配"(一)"等
+                    r'^\s*第[一二三四五六七八九十]+[章节篇部分]\s*',  # 匹配"第一章"等
+                    
+                    # 数字序号 - 处理各种格式和标点
+                    r'^\s*\d+[\s]*[、.．:：]\s*',  # 匹配"1、"、"1."、"1："等，包括数字后可能的空格
+                    
+                    # 三级和四级标题优先匹配（更具体的模式先匹配）
+                    r'^\s*\d+\.\d+\.\d+\.\d+',  # 匹配"1.1.1.1"等完整四级标题（无需后续标点）
+                    r'^\s*\d+\.\d+\.\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1.1.1"等带标点的四级标题
+                    r'^\s*\d+\.\d+\.\d+',  # 匹配"1.1.1"、"7.1.1"等完整三级标题（无需后续标点）
+                    r'^\s*\d+\.\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1.1"等带标点的三级标题
+                    
+                    # 二级标题
+                    r'^\s*\d+\.\d+',  # 匹配"1.1"、"5.2"等完整二级标题（无需后续标点）
+                    r'^\s*\d+\.\d+[\s]*[、.．:：]?\s*',  # 匹配"1.1"、"1.1、"等带标点的二级标题
+                    
+                    # 特殊格式
+                    r'^\s*\d+\s*\.\s*\d+\s*',  # 匹配特殊格式如"3. 1"或"3.1"等带空格或不带空格的编号
+                    r'^\s*[A-Za-z]\s*[)）、.．:：]\s*',  # 匹配字母编号如"A."、"a、"等
+                    r'^\s*[（(（]\d+[)））]\s*',  # 匹配"(1)"等
+                    r'^\s*附录\s*[A-Za-z][\s:：]*',  # 匹配"附录A"等
+                    
+                    # 中文序号与数字混合
+                    r'^\s*[一二三四五六七八九十][\s\.．]\d+[\s\.．]*',  # 匹配"一.1"等混合格式
+                    r'^\s*第\d+[章节篇部分][\s\.．]*',  # 匹配"第1章"等
+                ]
+                
+                # 按照优先级依次尝试移除章节编号
+                for pattern in section_patterns:
+                    # 尝试匹配开头的章节编号
+                    if re.match(pattern, cleaned_text):
+                        cleaned_text = re.sub(pattern, '', cleaned_text, count=1)
+                        break  # 找到匹配后立即退出，避免过度匹配
+                
+                # 特殊情况：处理章节编号残留问题
+                # 1. 处理诸如"3. 1"这样格式后，可能只删除了"3."而留下"1"
+                # 2. 处理"5.2煤矿安全监控系统"这种情况，可能只删除了"5."而留下"2煤矿安全监控系统"
+                # 3. 处理"7.7.1"这种情况，可能只删除了"7.7"而留下".1"开头的文本
+                
+                # 采用新的处理方式：抽取前缀并检查是否是章节编号
+                if cleaned_text.strip():
+                    # 获取前12个字符，去除空格后判断是否存在章节编号
+                    prefix = cleaned_text.strip()[:12].replace(' ', '')
+                    
+                    # 检查前缀是否包含典型的章节编号格式
+                    is_section_number = False
+                    section_pattern = None
+                    
+                    # 检查四级标题编号（例如：6.3.2.1）
+                    if re.match(r'^\.?\d+\.?\d+\.?\d+\.?\d+', prefix):
+                        is_section_number = True
+                        section_pattern = re.match(r'^\.?\d+\.?\d+\.?\d+\.?\d+', prefix).group(0)
+                    # 检查三级标题编号（例如：6.3.2或.3.2）
+                    elif re.match(r'^\.?\d+\.?\d+\.?\d+', prefix):
+                        is_section_number = True
+                        section_pattern = re.match(r'^\.?\d+\.?\d+\.?\d+', prefix).group(0)
+                    # 检查二级标题编号（例如：6.3或.3）
+                    elif re.match(r'^\.?\d+\.?\d+', prefix):
+                        is_section_number = True
+                        section_pattern = re.match(r'^\.?\d+\.?\d+', prefix).group(0)
+                    # 检查以点号开头的数字（例如：.2）
+                    elif re.match(r'^\.+\d+', prefix):
+                        is_section_number = True
+                        section_pattern = re.match(r'^\.+\d+', prefix).group(0)
+                    
+                    if is_section_number and section_pattern:
+                        # 找到章节编号的结束位置
+                        pos = len(section_pattern)
+                        
+                        # 简单直接地去除章节编号
+                        if pos < len(cleaned_text.strip()):
+                            cleaned_text = cleaned_text.strip()[pos:]
+                        
+                            # 去除可能存在的前导空格
+                            cleaned_text = cleaned_text.lstrip()
+                            
+                            logger.debug(f"检测到章节编号 '{section_pattern}'，已移除")
+                
+                # 作为备选方案，保留原有的处理逻辑以防新方法有遗漏
+                # 首先检查是否仍以点号开头
+                if cleaned_text.strip() and cleaned_text.strip()[0] == '.':
+                    lines = cleaned_text.split('\n')
+                    first_line = lines[0].strip()
+                    
+                    # 检查是否是类似".1"或".1.2"这样的残留编号
+                    if re.match(r'^\.+\d+', first_line):
+                        # 使用更宽松的条件检查原始文本，确保捕获所有多级标题格式
+                        if raw_text.strip() and ('.' in raw_text[:10]):
+                            # 移除开头的所有点号和紧跟的数字
+                            # 更彻底的处理方式：如果以点号开头，直接去除所有开头的点号+数字组合
+                            pattern = r'^\.+\d+\.?'
+                            while re.match(pattern, lines[0]):
+                                lines[0] = re.sub(pattern, '', lines[0])
+                            cleaned_text = '\n'.join(lines)
+                
+                # 然后检查是否以数字开头，这可能是其他编号处理不完全的情况
+                elif cleaned_text.strip() and cleaned_text.strip()[0].isdigit():
+                    lines = cleaned_text.split('\n')
+                    first_line = lines[0].strip()
+                    
+                    # 情况1：如果第一行只是一个数字
+                    if re.match(r'^\d+\s*$', first_line):
+                        if len(lines) > 1:
+                            cleaned_text = '\n'.join(lines[1:])  # 删除只有数字的第一行
+                    
+                    # 情况2：如果第一行以数字开头后面紧跟空格
+                    elif re.match(r'^\d+\s+', first_line):
+                        lines[0] = re.sub(r'^\d+\s+', '', lines[0])  # 删除开头的数字和空格
+                        cleaned_text = '\n'.join(lines)
+                    
+                    # 情况3：处理"2煤矿安全监控系统"这种紧凑形式（数字直接连着文本，没有空格）
+                    elif re.match(r'^\d+\S', first_line):
+                        # 只有当这一行看起来像是被部分处理的多级标题时才处理
+                        # 通常这种情况发生在文本是"X.Y章节名"，处理后变成"Y章节名"
+                        # 我们通过检查原始文本是否包含类似"X.Y"的模式来确认
+                        if raw_text.strip() and re.match(r'^\s*\d+\.', raw_text.strip()):
+                            lines[0] = re.sub(r'^\d+', '', lines[0])  # 删除开头的数字
+                            cleaned_text = '\n'.join(lines)
+                
+                data.append({
+                    "原文内容": cleaned_text.strip(),
+                    "入库内容": raw_text
+                })
+            
+            # 创建DataFrame
+            df = pd.DataFrame(data)
+            
+            # 保存到Excel
+            try:
+                df.to_excel(excel_file, index=False, engine='openpyxl')
+                logger.info(f"✅ 已将 {file_name} 的 {len(data)} 个文本块保存到: {excel_file}")
+            except Exception as e:
+                logger.error(f"❌ 保存 {file_name} 的Excel文件失败: {str(e)}")
+        
+        total_files = len(file_chunks)
+        logger.info(f"✅ 完成保存 {total_files} 个文件的文本块到Excel文件")
 
 
 if __name__ == "__main__":
