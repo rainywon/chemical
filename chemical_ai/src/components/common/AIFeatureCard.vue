@@ -23,6 +23,8 @@
         <li>苯酚生产过程中如何控制硫酸雾的排放？</li>
         <li>高温高压釜的安全联锁系统应如何设计？</li>
         <li>双氧水与有机物混合可能产生哪些危险？</li>
+        <li>芳香胺类化合物的职业暴露限值是多少？</li>
+        <li>硝化反应过程中需要注意哪些安全风险点？</li>
       </ul>
     </div>
     
@@ -160,8 +162,10 @@
   border-radius: 12px;
   padding: 16px;
   margin: 15px 0;
-  flex: 0 1 auto;
-  max-height: 200px;
+  flex: 1 1 auto;
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
   text-align: center;
   position: relative;
   z-index: 1;
@@ -189,21 +193,26 @@
 .example-list {
   margin: 0;
   padding-left: 15px;
+  padding-right: 5px;
   font-size: 0.9rem;
   color: #4a5568;
   text-align: left;
   list-style-position: outside;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .example-list li {
-  margin-bottom: 8px;
-  line-height: 1.5;
+  margin-bottom: 6px;
+  line-height: 1.4;
   text-align: left;
-  padding: 8px;
+  padding: 6px;
   border-radius: 8px;
   transition: all 0.2s ease;
   position: relative;
   border-left: 2px solid transparent;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .example-list li:hover {
@@ -212,6 +221,25 @@
   cursor: pointer;
   border-left: 2px solid #4f46e5;
   padding-left: 12px;
+}
+
+/* 自定义滚动条 */
+.example-box::-webkit-scrollbar {
+  width: 6px;
+}
+
+.example-box::-webkit-scrollbar-track {
+  background: rgba(247, 248, 255, 0.4);
+  border-radius: 10px;
+}
+
+.example-box::-webkit-scrollbar-thumb {
+  background: rgba(79, 70, 229, 0.2);
+  border-radius: 10px;
+}
+
+.example-box::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 70, 229, 0.3);
 }
 
 /* 按钮容器 */

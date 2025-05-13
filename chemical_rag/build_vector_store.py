@@ -1,8 +1,6 @@
 import hashlib
 import sys
 import torch
-import pandas as pd  # 导入pandas，用于操作Excel文件
-import re  # 导入正则表达式模块，用于处理文本
 from langchain.text_splitter import RecursiveCharacterTextSplitter  # 导入文档分割工具
 from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.documents import Document
@@ -10,7 +8,7 @@ from langchain_huggingface import HuggingFaceEmbeddings  # 导入HuggingFace嵌�
 from langchain_community.vectorstores import FAISS  # 导入FAISS用于构建向量数据库
 from langchain_community.document_loaders import UnstructuredPDFLoader  # 新增导入
 from langchain_community.document_loaders import UnstructuredWordDocumentLoader
-import os  # 导入os模块，用于获取工作目录
+import os
 import json
 from pathlib import Path  # 导入Path，用于路径处理
 from datetime import datetime  # 导入datetime，用于记录时间戳
@@ -561,6 +559,14 @@ class VectorDBBuilder:
                 r'^(\d{4}年\d{1,2}月\d{1,2}日.*?)[:：]?\s*(.*)$',
                 # "（一）、（二）"格式
                 r'^\s*[（(]\s*(一|二|三|四|五|六|七|八|九|十|[一二三四五六七八九十]{2})\s*[)）]\s*[、,:：.．]?\s*(.+)$'
+            ],
+            # 新增: 缺少标点的章节标题格式
+            'missing_punctuation': [
+                # 识别类似 "9 1.1", "9 1.2" 这样缺少标点的标题
+                r'^\s*(\d+)\s+(\d+\.\d+)(?:\s+|$)(.*)$',
+                r'^\s*(\d+)\s+(\d+)(?:\s+|$)(.*)$',
+                # 识别类似 "9 1.41" 这样的格式
+                r'^\s*(\d+)\s+(\d+\.\d+\d+)(?:\s+|$)(.*)$',
             ]
         }
         
@@ -626,14 +632,33 @@ class VectorDBBuilder:
                         
                     match_info["is_header"] = True
                     match_info["level"] = i + 1
-                    match_info["num"] = match.group(1)
-                    match_info["pattern_type"] = pattern_type
                     
-                    # 处理标题文本
-                    if len(match.groups()) > 1 and match.group(2):
-                        match_info["title"] = match.group(2).strip()
+                    # 特殊处理缺少标点的模式
+                    if pattern_type == 'missing_punctuation':
+                        if len(match.groups()) >= 2:
+                            # 对于缺少标点的模式，组合主标题和子标题编号
+                            main_num = match.group(1)
+                            sub_num = match.group(2)
+                            match_info["num"] = f"{main_num}.{sub_num}"
+                            
+                            # 如果有标题文本，则使用；否则只使用编号
+                            if len(match.groups()) >= 3 and match.group(3):
+                                match_info["title"] = match.group(3).strip()
+                            else:
+                                match_info["title"] = f"{main_num}.{sub_num}"
+                        else:
+                            match_info["num"] = match.group(1)
+                            match_info["title"] = match_info["num"]
                     else:
-                        match_info["title"] = match_info["num"]
+                        # 常规模式处理
+                        match_info["num"] = match.group(1)
+                        match_info["pattern_type"] = pattern_type
+                        
+                        # 处理标题文本
+                        if len(match.groups()) > 1 and match.group(2):
+                            match_info["title"] = match.group(2).strip()
+                        else:
+                            match_info["title"] = match_info["num"]
                     
                     # 事故报告特有的处理
                     if pattern_type == 'accident_report':
@@ -1085,11 +1110,7 @@ class VectorDBBuilder:
             return False
 
     def build_vector_store(self):
-        """构建向量数据库
-        
-        Returns:
-            List[Document]: 处理后的文档块列表
-        """
+        """构建向量数据库"""
         logger.info("开始构建向量数据库")
 
         # 创建必要目录
@@ -1100,7 +1121,7 @@ class VectorDBBuilder:
         
         if not chunks:
             logger.warning("没有文档块可以处理，跳过向量存储构建")
-            return []
+            return
 
         # 备份现有向量数据库
         if Path(self.config.vector_db_path).exists() and any(Path(self.config.vector_db_path).glob('*')):
@@ -1121,9 +1142,6 @@ class VectorDBBuilder:
         # 保存向量数据库
         vector_store.save_local(str(self.config.vector_db_path))  # 保存向量存储到指定路径
         logger.info(f"向量数据库已保存至 {self.config.vector_db_path}")  # 输出保存路径
-        
-        # 返回处理后的文档块
-        return chunks
 
     def save_chunks_to_file(self, chunks: List[Document]):
         """将文档分块保存到文件中，支持多种格式，但不作为缓存存储
@@ -1241,163 +1259,30 @@ class VectorDBBuilder:
         except Exception as e:
             logger.error(f"保存CSV格式的分块摘要失败: {str(e)}")
 
-    def save_chunks_to_excel(self, chunks: List[Document], output_dir: str = None):
-        """将文档分块保存到Excel文件中，按照源文件分组
-        
-        Args:
-            chunks: 文档分块列表
-            output_dir: 输出目录，默认为C:/Users/Administrator/Desktop/chunks
-        """
-        if not chunks:
-            logger.info("没有文本块可供保存")
-            return
-        
-        # 设置输出目录，如果未指定则使用桌面路径
-        if output_dir is None:
-            output_dir = r"C:\Users\Administrator\Desktop\chunks"
-            
-        # 确保输出目录存在
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"开始将文档分块保存到Excel文件，输出目录: {output_dir}")
-        
-        # 按文件分组整理文档块
-        file_chunks = {}
-        for chunk in chunks:
-            source = chunk.metadata.get("source", "")
-            if source not in file_chunks:
-                file_chunks[source] = []
-            file_chunks[source].append(chunk)
-        
-        # 术语判断正则表达式
-        term_patterns = [
-            r'^(?:\d+\.?)+\s*术语(?:和定义)?$',  # 匹配"3.术语"、"3.1 术语和定义"等
-            r'^第\s*\d+\s*章\s*术语(?:和定义)?$',  # 匹配"第3章 术语和定义"
-            r'^[一二三四五六七八九十]+、\s*术语(?:和定义)?$'  # 匹配"三、术语和定义"
-        ]
-        
-        # 处理每个文件的块
-        total_files = len(file_chunks)
-        processed_files = 0
-        
-        with tqdm(total=total_files, desc="保存Excel文件") as pbar:
-            for source, source_chunks in file_chunks.items():
-                try:
-                    # 获取文件名，用作Excel文件名
-                    file_path = Path(source)
-                    file_name = file_path.stem  # 不带扩展名的文件名
-                    excel_filename = f"{file_name}.xlsx"
-                    excel_path = output_path / excel_filename
-                    
-                    # 创建数据结构以存储Excel数据
-                    excel_data = []
-                    
-                    # 按块索引排序
-                    sorted_chunks = sorted(source_chunks, 
-                                           key=lambda x: x.metadata.get("chunk_index", 0))
-                    
-                    # 处理每个文本块
-                    for chunk in sorted_chunks:
-                        content = chunk.page_content
-                        
-                        # 获取章节编号和标题
-                        section_num = chunk.metadata.get("section_num", "")
-                        section_title = chunk.metadata.get("section_title", "")
-                        
-                        # 原文内容：删除章节编号
-                        # 如果内容以章节编号开头，则删除
-                        original_content = content
-                        if section_num:
-                            # 尝试删除开头的章节编号和标题
-                            header_pattern = f"^{re.escape(section_num)}\\s*{re.escape(section_title)}\\s*"
-                            original_content = re.sub(header_pattern, "", original_content, count=1)
-                        
-                        # 入库内容：直接使用原始content
-                        db_content = content
-                        
-                        # 判断是否是术语块
-                        is_term = False
-                        
-                        # 检查块的标题是否符合术语章节的特征
-                        if section_title and section_num:
-                            full_title = f"{section_num} {section_title}"
-                            for pattern in term_patterns:
-                                if re.search(pattern, full_title, re.IGNORECASE):
-                                    is_term = True
-                                    break
-                        
-                        # 检查块内容是否包含术语定义的特征
-                        if not is_term:
-                            # 术语定义通常采用"术语名 定义"的格式
-                            definition_patterns = [
-                                r'\d+\.\d+\s+[\u4e00-\u9fa5a-zA-Z]+\s+[\u4e00-\u9fa5]',  # 3.1 术语 定义
-                                r'[\u4e00-\u9fa5a-zA-Z]+\s+[\u4e00-\u9fa5]'  # 术语 定义
-                            ]
-                            
-                            definition_count = 0
-                            content_lines = content.split('\n')
-                            for line in content_lines:
-                                for pattern in definition_patterns:
-                                    if re.search(pattern, line):
-                                        definition_count += 1
-                                        break
-                            
-                            # 如果有多行符合术语定义模式，则认为是术语块
-                            if definition_count >= 3:  # 至少有3个术语定义
-                                is_term = True
-                        
-                        # 将文本块添加到Excel数据中
-                        excel_data.append({
-                            "原文内容": original_content.strip(),
-                            "入库内容": db_content.strip(),
-                            "术语": "是" if is_term else "否"
-                        })
-                    
-                    # 创建DataFrame并保存为Excel
-                    if excel_data:
-                        df = pd.DataFrame(excel_data)
-                        df.to_excel(excel_path, index=False, engine='openpyxl')
-                        logger.info(f"✅ 已将 '{file_name}' 的 {len(excel_data)} 个文本块保存至Excel文件: {excel_path}")
-                    else:
-                        logger.warning(f"⚠️ '{file_name}' 没有可保存的文本块")
-                
-                except Exception as e:
-                    logger.error(f"❌ 保存 '{file_name}' 的Excel文件时出错: {str(e)}")
-                
-                processed_files += 1
-                pbar.update(1)
-                pbar.set_postfix_str(f"已处理 {processed_files}/{total_files} 个文件")
-        
-        logger.info(f"✅ 所有文档分块已保存到Excel文件，共处理 {processed_files} 个文件")
-
 
 if __name__ == "__main__":
     try:
         # 初始化配置
         config = Config()
         
-        # 打印工作目录信息
-        logger.info(f"工作目录: {os.getcwd()}")
-        logger.info(f"数据目录: {config.data_dir}")
-        logger.info(f"缓存目录: {config.cache_dir}")
-        logger.info(f"向量数据库目录: {config.vector_db_path}")
+        # 添加: 解析命令行参数，允许用户指定是否打印详细分块内容
+        import argparse
+        parser = argparse.ArgumentParser(description='构建化工安全领域向量数据库')
+        parser.add_argument('--detailed-chunks', action='store_true', 
+                           help='是否输出详细的分块内容')
+        parser.add_argument('--max-preview', type=int, default=510,
+                           help='详细输出时每个文本块显示的最大字符数')
+        args = parser.parse_args()
         
-        # Excel输出目录
-        excel_output_dir = r"C:\Users\Administrator\Desktop\chunks"
-        logger.info(f"Excel文件将保存至: {excel_output_dir}")
-        
+        # 更新配置
+        if args.detailed_chunks:
+            config.print_detailed_chunks = True
+            config.max_chunk_preview_length = args.max_preview
+            print(f"将输出详细分块内容，每块最多显示 {args.max_preview} 字符")
+
         # 构建向量数据库
         builder = VectorDBBuilder(config)
-        
-        # 处理文档并获取分块
-        logger.info("开始处理文档并导出Excel...")
-        chunks = builder.process_files()
-        
-        # 将文档分块保存到Excel文件
-        builder.save_chunks_to_excel(chunks, excel_output_dir)
-        
-        logger.info("所有处理完成")
+        builder.build_vector_store()
 
     except Exception as e:
         logger.exception("程序运行出错")  # 记录程序异常
