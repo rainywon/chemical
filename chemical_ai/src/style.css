@@ -1,0 +1,256 @@
+:root {
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    font-weight: 500;
+    color: #646cff;
+    text-decoration: inherit;
+}
+
+a:hover {
+    color: #535bf2;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+h1 {
+    font-size: 3.2em;
+    line-height: 1.1;
+}
+
+button {
+    border-radius: 8px;
+    border: 1px solid transparent;
+    padding: 0.6em 1.2em;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background-color: #1a1a1a;
+    cursor: pointer;
+    transition: border-color 0.25s;
+}
+
+button:hover {
+    border-color: #646cff;
+}
+
+button:focus,
+button:focus-visible {
+    outline: 4px auto -webkit-focus-ring-color;
+}
+
+.card {
+    padding: 2em;
+}
+
+#app {
+    max-width: 100%;
+    margin: 0 auto;
+    text-align: center;
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        color: #213547;
+        background-color: #ffffff;
+    }
+
+    a:hover {
+        color: #747bff;
+    }
+
+    button {
+        background-color: #f9f9f9;
+    }
+}
+
+/* 全局移除Element Plus按钮点击时的黑边 */
+.el-button,
+.el-button:focus,
+.el-button:active,
+.el-button:hover,
+.el-button:visited {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* 移除Element Plus组件的所有黑边 */
+:focus {
+    outline: none !important;
+}
+
+.el-input__inner:focus,
+.el-textarea__inner:focus,
+.el-select:focus,
+.el-select .el-input__inner:focus,
+.el-date-editor:focus,
+.el-date-editor .el-input__inner:focus,
+.el-radio:focus,
+.el-checkbox:focus,
+.el-switch:focus,
+.el-input-number:focus,
+.el-cascader:focus,
+.el-slider:focus,
+.el-tabs__item:focus,
+.el-pagination__jump .el-input__inner:focus,
+.el-input__inner:active,
+.el-textarea__inner:active,
+.el-select:active,
+.el-select .el-input__inner:active,
+.el-date-editor:active,
+.el-date-editor .el-input__inner:active,
+.el-radio:active,
+.el-checkbox:active,
+.el-switch:active,
+.el-input-number:active,
+.el-cascader:active,
+.el-slider:active,
+.el-tabs__item:active,
+.el-pagination__jump .el-input__inner:active {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* 解决点击对话框中的按钮黑边问题 */
+.el-dialog .el-button:focus,
+.el-dialog .el-button:active,
+.el-message-box .el-button:focus,
+.el-message-box .el-button:active,
+.el-popconfirm .el-button:focus,
+.el-popconfirm .el-button:active,
+.el-drawer .el-button:focus,
+.el-drawer .el-button:active {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: initial;
+}
+
+/* 全局消息提示美化样式 */
+.el-message {
+    border-width: 0 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+    border-radius: 8px !important;
+    padding: 12px 20px !important;
+    transform: translate3d(0, 0, 0);
+    min-width: 300px !important;
+    opacity: 1 !important;
+}
+
+.el-message__content {
+    font-size: 14px !important;
+    line-height: 1.5 !important;
+    color: #333 !important;
+    font-weight: 500 !important;
+}
+
+.el-message__icon {
+    margin-right: 12px !important;
+    font-size: 18px !important;
+}
+
+.el-message__closeBtn {
+    font-size: 16px !important;
+    color: #909399 !important;
+    opacity: 0.8;
+}
+
+.el-message__closeBtn:hover {
+    opacity: 1;
+    color: #606266 !important;
+}
+
+/* 成功消息 - 使用更轻量的颜色 */
+.el-message--success {
+    background-color: #f0fff4 !important;
+    border-left: 3px solid #10b981 !important;
+}
+
+.el-message--success .el-message__icon {
+    color: #10b981 !important;
+}
+
+/* 警告消息 - 使用更轻量的颜色 */
+.el-message--warning {
+    background-color: #fffbeb !important;
+    border-left: 3px solid #f59e0b !important;
+}
+
+.el-message--warning .el-message__icon {
+    color: #f59e0b !important;
+}
+
+/* 错误消息 - 使用更轻量的颜色 */
+.el-message--error {
+    background-color: #fff5f5 !important;
+    border-left: 3px solid #ef4444 !important;
+}
+
+.el-message--error .el-message__icon {
+    color: #ef4444 !important;
+}
+
+/* 信息消息 - 使用更轻量的颜色 */
+.el-message--info {
+    background-color: #ebf8ff !important;
+    border-left: 3px solid #3b82f6 !important;
+}
+
+.el-message--info .el-message__icon {
+    color: #3b82f6 !important;
+}
+
+/* 使用更简单高效的动画 */
+.el-message-fade-enter-from,
+.el-message-fade-leave-to {
+    opacity: 0 !important;
+    transform: translateX(15px) !important;
+}
+
+.el-message-fade-enter-active {
+    transition: opacity 0.2s ease, transform 0.2s ease !important;
+}
+
+.el-message-fade-leave-active {
+    transition: opacity 0.15s ease, transform 0.15s ease !important;
+}
+
+/* 移除旧的关键帧动画，使用更高效的transition */
+@keyframes messageInRight {
+    from {
+        transform: translate3d(20px, 0, 0);
+        opacity: 0;
+    }
+
+    to {
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+    }
+}
+
+@keyframes messageOutRight {
+    from {
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+    }
+
+    to {
+        transform: translate3d(20px, 0, 0);
+        opacity: 0;
+    }
+}
