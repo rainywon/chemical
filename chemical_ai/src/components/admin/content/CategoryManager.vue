@@ -740,14 +740,27 @@ const previewFile = async (file) => {
   previewLoading.value = true;
   
   try {
+    // 检查文件名是否存在
+    if (!file.fileName) {
+      ElMessage.error("文件名为空，无法预览");
+      previewLoading.value = false;
+      return;
+    }
+    
     // 获取token
     const token = localStorage.getItem('token');
     
     // 构建查询参数
     const params = { max_rows: 5 };
     
+    // 对文件名进行URL编码，避免特殊字符问题
+    const encodedFileName = encodeURIComponent(file.fileName);
+    
     // 获取文件预览内容
-    const response = await axios.get(`${baseApiUrl}/admin/content/knowledge-files/preview/${file.fileName}`, {
+    console.log(`正在请求预览文件: ${file.fileName}`);
+    console.log(`请求URL: ${baseApiUrl}/admin/content/knowledge-files/preview/${encodedFileName}`);
+    
+    const response = await axios.get(`${baseApiUrl}/admin/content/knowledge-files/preview/${encodedFileName}`, {
       params,
       headers: {
         'Authorization': `Bearer ${token}`
@@ -764,6 +777,8 @@ const previewFile = async (file) => {
     }
   } catch (error) {
     console.error('预览文件出错:', error);
+    console.error('请求URL:', `${baseApiUrl}/admin/content/knowledge-files/preview/${encodeURIComponent(file.fileName)}`);
+    console.error('错误详情:', error.response?.data || error.message);
     ElMessage.error(`预览文件失败: ${error.response?.data?.detail || error.message}`);
     previewData.value = [];
     previewColumns.value = [];

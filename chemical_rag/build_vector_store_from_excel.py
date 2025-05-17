@@ -37,7 +37,7 @@ class ExcelVectorDBBuilder:
         self.vector_backup_dir = self.vector_dir / "backups"
         
         # 设置Excel文件目录
-        self.excel_dir = Path(self.config.excel_dir)
+        self.excel_dir = Path(self.config.knowledge_base_path)
         
         # 确保目录存在
         self.vector_dir.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,7 @@
       <span class="tag file-tag">危化品MSDS</span>
     </div>
     <div class="file-list fade-in-delay-3">
-      <div class="file-item" v-for="file in latestFiles.slice(0, 8)" :key="file.id">
+      <div class="file-item" v-for="file in latestFiles.slice(0, 5)" :key="file.id">
         <span class="file-name" :title="file.name">{{ file.name }}</span>
       </div>
     </div>

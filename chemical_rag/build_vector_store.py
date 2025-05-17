@@ -44,16 +44,15 @@ class VectorDBBuilder:
         """
         self.config = config
         
-        # 设置缓存目录路径（保留用于存储分块分析结果）
-        self.cache_dir = Path(config.cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+
         
         # 设置向量数据库路径
         self.vector_dir = Path(config.vector_db_path)
         self.vector_backup_dir = self.vector_dir / "backups"
         
         # 将源文件目录定义放在初始化方法中
-        self.subfolders = ['标准']  # '标准性文件','法律', '规范性文件'
+        self.subfolders = ['emergency_document']  # '标准性文件','法律', '规范性文件'
         
         # 检查文件匹配模式
         if not hasattr(config, 'files') or not config.files:
@@ -70,6 +69,9 @@ class VectorDBBuilder:
         self.print_detailed_chunks = getattr(config, 'print_detailed_chunks', False)
         # 详细输出时每个文本块显示的最大字符数
         self.max_chunk_preview_length = getattr(config, 'max_chunk_preview_length', 200)
+        
+        # 设置缓存目录（已注释）
+        # self.cache_dir = Path(config.cache_dir)
         
         logger.info("初始化向量数据库构建器...")
 
@@ -502,8 +504,11 @@ class VectorDBBuilder:
         # 打印分块结果概览
         self._print_chunks_summary(chunks)
         
-        # 保存分块到文件，方便用户查看
-        self.save_chunks_to_file(chunks)
+        # # 保存分块到文件，方便用户查看
+        # self.save_chunks_to_file(chunks)
+
+        # 保存分块到Excel文件
+        self.save_chunks_to_excel(chunks)
 
         return chunks
 
@@ -927,12 +932,6 @@ class VectorDBBuilder:
         for file_path, file_chunks_list in sorted(file_chunks.items(), key=lambda x: len(x[1]), reverse=True):
             file_name = Path(file_path).name if isinstance(file_path, str) else "未知文件"
             logger.info(f"  • {file_name}: {len(file_chunks_list)} 块")
-        
-        
-        # 输出详细分块内容 (如果开启)
-        if self.print_detailed_chunks:
-            self._print_detailed_chunks(chunks)
-            
         logger.info("="*50)
 
     def _print_detailed_chunks(self, chunks: List[Document]):
@@ -1043,25 +1042,49 @@ class VectorDBBuilder:
             logger.warning("没有文档块可以处理，跳过向量存储构建")
             return
 
-        # 备份现有向量数据库
-        if Path(self.config.vector_db_path).exists() and any(Path(self.config.vector_db_path).glob('*')):
-            self.backup_vector_db()
-
         # 生成嵌入模型
         embeddings = self.create_embeddings()
 
-        # 构建向量存储
+        # 检查是否存在现有向量数据库
+        vector_db_path = Path(self.config.vector_db_path)
+        if vector_db_path.exists() and any(vector_db_path.glob('*')):
+            try:
+                # 备份现有向量数据库
+                self.backup_vector_db()
+                
+                # 加载现有向量数据库
+                logger.info("加载现有向量数据库...")
+                existing_vector_store = FAISS.load_local(
+                    str(vector_db_path),
+                    embeddings,
+                    allow_dangerous_deserialization=True,
+                    distance_strategy=DistanceStrategy.COSINE
+                )
+                
+                # 增量更新
+                logger.info("进行增量更新...")
+                existing_vector_store.add_documents(chunks)
+                
+                # 保存更新后的向量数据库
+                existing_vector_store.save_local(str(vector_db_path))
+                logger.info(f"向量数据库已更新并保存至 {vector_db_path}")
+                return
+                
+            except Exception as e:
+                logger.error(f"增量更新失败: {str(e)}")
+                logger.info("将创建新的向量数据库...")
+        
+        # 如果向量数据库不存在或增量更新失败，创建新的向量数据库
         logger.info("生成向量...")
-        # 构建向量存储时显式指定
         vector_store = FAISS.from_documents(
             chunks,
             embeddings,
-            distance_strategy=DistanceStrategy.COSINE  # 明确指定余弦相似度
+            distance_strategy=DistanceStrategy.COSINE
         )
 
         # 保存向量数据库
-        vector_store.save_local(str(self.config.vector_db_path))  # 保存向量存储到指定路径
-        logger.info(f"向量数据库已保存至 {self.config.vector_db_path}")  # 输出保存路径
+        vector_store.save_local(str(vector_db_path))
+        logger.info(f"新的向量数据库已保存至 {vector_db_path}")
 
     def save_chunks_to_file(self, chunks: List[Document]):
         """将文档分块保存到文件中，支持多种格式，但不作为缓存存储
@@ -1421,7 +1444,8 @@ class VectorDBBuilder:
                     vector_store = FAISS.load_local(
                         str(vector_db_path),
                         embeddings,
-                        allow_dangerous_deserialization=True
+                        allow_dangerous_deserialization=True,
+                        distance_strategy=DistanceStrategy.COSINE
                     )
                     
                     # 为新文件创建向量

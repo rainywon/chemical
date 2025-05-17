@@ -46,7 +46,7 @@ const fetchEmergencyFiles = async () => {
       return;
     }
     
-    const response = await fetch(`${API_BASE_URL}/emergency_files/?page=1&page_size=8`, {
+    const response = await fetch(`${API_BASE_URL}/emergency_files/?page=1&page_size=5`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
