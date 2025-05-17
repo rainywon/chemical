@@ -99,7 +99,7 @@ def log_admin_operation(admin_id: int, operation_type: str, description: str):
         )
         
         admin_name = admin_result[0]['full_name'] if admin_result else f"管理员{admin_id}"
-                # 在描述前添加管理员姓名
+        # 在描述前添加管理员姓名
         full_description = f"{admin_name}{description}"
         execute_update(
             """INSERT INTO operation_logs (admin_id, operation_type, operation_desc, created_at) 
@@ -296,7 +296,7 @@ async def upload_files(
             file_path = os.path.join(KNOWLEDGE_BASE_PATH, file.filename)
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
-            
+            print(f"文件 {file.filename} 已保存到 {file_path}")
             uploaded_files.append(file.filename)
             
             # 为上传的文件增量更新向量数据库
@@ -306,6 +306,15 @@ async def upload_files(
                 if success:
                     vector_db_updated = True
                     logger.info(f"文件 {file.filename} 已成功添加到向量数据库")
+                    # 判断文件类型，如果是PDF、Word文件则在生成Excel文件后删除原始文件
+                    file_ext = os.path.splitext(file.filename)[1].lower()
+                    if file_ext in ['.pdf', '.docx', '.doc']:
+                        try:
+                            # 删除原始文件
+                            os.remove(file_path)
+                            logger.info(f"已删除原始{file_ext}文件: {file_path}，仅保留文本分块后的Excel文件")
+                        except Exception as del_err:
+                            logger.error(f"删除原始{file_ext}文件失败: {str(del_err)}")
                 else:
                     vector_db_errors.append(f"无法将文件 {file.filename} 添加到向量数据库")
                     logger.warning(f"无法将文件 {file.filename} 添加到向量数据库")
@@ -381,24 +390,9 @@ async def delete_file(
     file_name: str
 ):
     """
-            media_type='application/octet-stream'
+    删除知识库文件
     """
     try:
-        # 获取管理员ID
-        admin_id = await get_current_admin(request)
-        
-        file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
-        
-        # 检查文件是否存在
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="文件不存在")
-        
-    file_name: str
-):
-    """
-        # 删除文件
-        os.remove(file_path)
-        
         # 获取管理员ID
         admin_id = await get_current_admin(request)
         
@@ -452,9 +446,10 @@ async def delete_file(
                 # 如果有要删除的向量
                 if docs_to_delete:
                     # 删除向量
-        # 记录操作日志（不阻止主要功能）
-        log_admin_operation(admin_id, "删除", f"删除了文件{file_name}")
-        
+                    for doc_id in docs_to_delete:
+                        del vector_store.docstore._dict[doc_id]
+                    
+                    # 保存修改后的向量数据库
                     vector_store.save_local(str(vector_db_path))
                     
                     logger.info(f"从向量数据库中删除了 {deletion_count} 个与文件 {file_name} 相关的向量")
@@ -462,6 +457,22 @@ async def delete_file(
                 else:
                     logger.info(f"向量数据库中未找到与文件 {file_name} 相关的向量")
             else:
+                logger.info("向量数据库不存在，无需清理")
+        except Exception as e:
+            vector_db_error = str(e)
+            logger.error(f"从向量数据库中删除数据失败: {str(e)}")
+        
+        # 记录操作日志（不阻止主要功能）
+        log_admin_operation(admin_id, "删除", f"删除了文件{file_name}")
+        
+        # 根据向量数据库更新状态返回不同的消息
+        if vector_db_updated:
+            return {"success": True, "message": f"成功删除文件 {file_name} 并从向量数据库中移除相关数据"}
+        elif vector_db_error:
+            return {"success": True, "message": f"成功删除文件 {file_name}，但从向量数据库中移除数据时出错: {vector_db_error}"}
+        else:
+            return {"success": True, "message": f"成功删除文件 {file_name}，向量数据库无需更新"}
+            
     except HTTPException:
         raise
     except Exception as e:
@@ -475,7 +486,7 @@ async def batch_delete_files(
     batch_request: BatchDeleteRequest
 ):
     """
-        else:
+    批量删除知识库文件
     """
     try:
         # 获取管理员ID
@@ -484,30 +495,13 @@ async def batch_delete_files(
         deleted_files = []
         failed_files = []
         file_paths = glob.glob(os.path.join(KNOWLEDGE_BASE_PATH, "*.*"))
+        deleted_file_paths = []
         
         # 获取所有文件的ID和名称映射
         file_map = {}
         for i, file_path in enumerate(file_paths):
             file_name = os.path.basename(file_path)
             file_map[str(i + 1)] = {"name": file_name, "path": file_path}
-        
-    """
-    try:
-        # 获取管理员ID
-        # 删除指定ID的文件
-        for file_id in batch_request.file_ids:
-            if file_id in file_map:
-                file_info = file_map[file_id]
-                try:
-        
-        # 获取所有文件的ID和名称映射
-        file_map = {}
-        for i, file_path in enumerate(file_paths):
-                    os.remove(file_info["path"])
-                    deleted_files.append(file_info["name"])
-                except Exception as e:
-                    failed_files.append({"name": file_info["name"], "error": str(e)})
-        
         
         # 删除指定ID的文件
         for file_id in batch_request.file_ids:
@@ -566,15 +560,16 @@ async def batch_delete_files(
                     # 如果有要删除的向量
                     if docs_to_delete:
                         # 删除向量
-        # 记录操作日志（不阻止主要功能）
-        log_admin_operation(admin_id, "删除", f"批量删除了{len(deleted_files)}个文件")
-        
+                        for doc_id in docs_to_delete:
+                            del vector_store.docstore._dict[doc_id]
+                        
+                        # 保存修改后的向量数据库
                         vector_store.save_local(str(vector_db_path))
                         
-            "success": True,
-            "deleted_files": deleted_files,
-            "failed_files": failed_files
-        }
+                        logger.info(f"从向量数据库中删除了 {vector_db_deleted_count} 个向量")
+                        vector_db_updated = True
+                    else:
+                        logger.info("没有找到需要从向量数据库中删除的向量")
                 else:
                     logger.info("向量数据库不存在，无需清理")
         except Exception as e:
@@ -585,6 +580,20 @@ async def batch_delete_files(
         log_admin_operation(admin_id, "删除", f"批量删除了{len(deleted_files)}个文件")
         
         # 根据向量数据库更新状态返回不同的消息
+        base_response = {
+            "success": True,
+            "deleted_files": deleted_files,
+            "failed_files": failed_files
+        }
+        
+        if vector_db_updated:
+            base_response["message"] = f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个，并从向量数据库中移除了相关数据"
+        elif vector_db_error:
+            base_response["message"] = f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个，但从向量数据库中移除数据时出错: {vector_db_error}"
+        else:
+            base_response["message"] = f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个，向量数据库无需更新"
+            
+        return base_response
     except Exception as e:
         logger.error(f"批量删除文件失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"批量删除文件失败: {str(e)}")
@@ -597,21 +606,6 @@ async def preview_file(
     max_rows: int = Query(5, description="最大预览行数")
 ):
     """
-            base_response["message"] = f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个，向量数据库无需更新"
-    """
-    try:
-        # 获取管理员ID
-        admin_id = await get_current_admin(request)
-        
-        file_path = os.path.join(KNOWLEDGE_BASE_PATH, file_name)
-        
-        # 检查文件是否存在
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="文件不存在")
-        
-        # 检查文件类型
-):
-        
     获取文件的预览内容
     """
     try:
@@ -705,6 +699,22 @@ async def preview_file(
                 
                 # 限制预览长度
                 preview_text = text[:2000] + "..." if len(text) > 2000 else text
+                
+                # 记录操作日志
+                log_admin_operation(admin_id, "查询", f"预览了Word文档{file_name}")
+                
+                # 返回预览数据
+                return {
+                    "success": True, 
+                    "file_type": "docx",
+                    "content": preview_text
+                }
+            except Exception as e:
+                logger.error(f"Word文档预览失败: {str(e)}")
+                return {"success": False, "message": f"无法预览Word文档: {str(e)}"}
+        else:
+            # 不支持的文件类型
+            return {"success": False, "message": f"不支持预览的文件类型: {file_ext}"}
     except HTTPException:
         raise
     except Exception as e:

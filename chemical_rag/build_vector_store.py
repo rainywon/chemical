@@ -1195,7 +1195,7 @@ class VectorDBBuilder:
             return
             
         # 创建输出目录
-        output_dir = Path(r"C:\Users\Administrator\Desktop\chunks")  # 使用相对路径，在当前工作目录下创建chunks文件夹
+        output_dir = Path(self.config.knowledge_base_path)
         output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"开始将文本块保存到Excel文件，输出目录: {output_dir}")
@@ -1407,7 +1407,7 @@ class VectorDBBuilder:
                 return False
                 
             logger.info(f"文件 {file_path_obj.name} 生成了 {len(chunks)} 个文本块")
-            
+            self.save_chunks_to_excel(chunks)
             # 检查向量数据库是否存在
             vector_db_path = Path(self.config.vector_db_path)
             

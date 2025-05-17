@@ -46,10 +46,11 @@
           >
             <div class="upload-instructions">
               <ul class="instruction-list">
-                <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 支持上传Excel文件(.xlsx, .xls)，单个文件不超过10MB</li>
+                <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 支持上传PDF文件(.pdf)和Word文件(.docx)，单个文件不超过10MB</li>
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 最多可选择5个文件同时上传</li>
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 上传前请检查文件格式是否正确</li>
                 <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> 上传后将自动更新知识库向量数据库，便于AI查询</li>
+                <li><el-icon class="instruction-icon"><InfoFilled /></el-icon> <span class="warning-text">注意: 上传PDF文件后，系统将自动删除原始PDF文件，仅保留文本分块后的Excel文件</span></li>
               </ul>
             </div>
           </el-alert>
@@ -71,7 +72,7 @@
             </div>
             <template #tip>
               <div class="el-upload__tip">
-                只能上传Excel文件(.xlsx, .xls)，且不超过10MB
+                只能上传PDF文件(.pdf)和Word文件(.docx)，且不超过10MB
               </div>
             </template>
           </el-upload>
@@ -196,8 +197,8 @@
           <div class="filter-label">文件类型</div>
           <el-select v-model="fileTypeFilter" placeholder="文件类型" clearable @change="filterFiles" class="filter-select">
             <el-option label="全部类型" value="" />
-            <el-option label="Excel(.xlsx)" value=".xlsx" />
-            <el-option label="Excel(.xls)" value=".xls" />
+            <el-option label="PDF(.pdf)" value=".pdf" />
+            <el-option label="Word(.docx)" value=".docx" />
           </el-select>
         </div>
 
@@ -273,7 +274,7 @@
         <el-table-column prop="fileType" label="类型" width="120" align="center">
           <template #default="scope">
             <el-tag 
-              :type="scope.row.fileType === '.xlsx' ? 'success' : 'primary'"
+              :type="scope.row.fileType === '.pdf' ? 'danger' : scope.row.fileType === '.xlsx' || scope.row.fileType === '.xls' ? 'success' : 'info'"
               effect="light"
               size="small"
               class="file-type-tag"
@@ -409,6 +410,17 @@
             ...等 {{ multipleSelection.length }} 个文件
           </li>
         </ul>
+        
+        <!-- PDF文件特别提示 -->
+        <el-alert
+          v-if="multipleSelection.some(file => file.fileName.toLowerCase().endsWith('.pdf'))"
+          title="注意：对于已处理过的PDF文件，系统中可能存在相应的Excel文件，这些Excel文件将会保留"
+          type="info"
+          show-icon
+          class="pdf-delete-note"
+          style="margin-top: 10px;"
+          :closable="false"
+        />
       </div>
       <template #footer>
         <span class="dialog-footer">
@@ -661,7 +673,18 @@ const uploadSelectedFiles = async () => {
         loadFileList();
       }, 1000);
       
+      // 检查是否有PDF文件被上传
+      const hasPdfFiles = response.data.files.some(filename => filename.toLowerCase().endsWith('.pdf'));
+      
+      if (hasPdfFiles) {
+        ElMessage({
+          type: 'success',
+          message: `${response.data.message}（PDF文件已转换为Excel并删除原文件）`,
+          duration: 5000
+        });
+      } else {
       ElMessage.success(response.data.message);
+      }
     } else {
       uploadStatus.value.progress = 100;
       uploadStatus.value.completed = true;
@@ -790,7 +813,73 @@ const downloadFile = (file) => {
   }
 };
 
-// 删除单个文件const deleteFile = async (file) => {  try {    // 显示确认对话框    await ElMessageBox.confirm(      `确定要删除文件 "${file.fileName}" 吗？此操作将同时从向量数据库中移除相关数据。`,      '删除确认',      {        confirmButtonText: '确定删除',        cancelButtonText: '取消',        type: 'warning',      }    );        // 显示loading    const loadingInstance = ElLoading.service({      text: '正在删除文件并清理向量数据库...',      background: 'rgba(0, 0, 0, 0.7)'    });    // 获取token    const token = localStorage.getItem('token');        // 发送删除请求    const response = await axios.delete(`${baseApiUrl}/admin/content/knowledge-files/${file.fileName}`, {      headers: {        'Authorization': `Bearer ${token}`      }    });        if (response.data.success) {      // 根据响应内容显示不同的成功消息      if (response.data.vector_db_error) {        ElMessage({          type: 'warning',          message: response.data.message,          duration: 5000,          showClose: true        });        console.error('向量数据库清理错误:', response.data.vector_db_error);      } else {        ElMessage.success(response.data.message);      }            // 删除成功后刷新文件列表      loadFileList();    } else {      ElMessage.error(response.data.message || '删除文件失败');    }  } catch (error) {    if (error === 'cancel') {      return; // 用户取消删除，不做处理    }    console.error('删除文件出错:', error);    ElMessage.error(`删除文件失败: ${error.response?.data?.detail || error.message}`);  } finally {    // 关闭loading    ElLoading.service().close();  }};
+// 删除单个文件
+const deleteFile = async (file) => {
+  try {
+    // 判断文件类型，为PDF文件提供额外提示
+    const isPdfFile = file.fileName.toLowerCase().endsWith('.pdf');
+    const confirmMessage = isPdfFile 
+      ? `确定要删除文件 "${file.fileName}" 吗？此操作将同时从向量数据库中移除相关数据。\n注意：如果该文件已生成Excel文件，该Excel文件仍会保留在系统中。`
+      : `确定要删除文件 "${file.fileName}" 吗？此操作将同时从向量数据库中移除相关数据。`;
+    
+    // 显示确认对话框
+    await ElMessageBox.confirm(
+      confirmMessage,
+      '删除确认',
+      {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        dangerouslyUseHTMLString: true
+      }
+    );
+    
+    // 显示loading
+    const loadingInstance = ElLoading.service({
+      text: '正在删除文件并清理向量数据库...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    });
+    
+    // 获取token
+    const token = localStorage.getItem('token');
+    
+    // 发送删除请求
+    const response = await axios.delete(`${baseApiUrl}/admin/content/knowledge-files/${file.fileName}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (response.data.success) {
+      // 根据响应内容显示不同的成功消息
+      if (response.data.vector_db_error) {
+        ElMessage({
+          type: 'warning',
+          message: response.data.message,
+          duration: 5000,
+          showClose: true
+        });
+        console.error('向量数据库清理错误:', response.data.vector_db_error);
+      } else {
+        ElMessage.success(response.data.message);
+      }
+      
+      // 删除成功后刷新文件列表
+      loadFileList();
+    } else {
+      ElMessage.error(response.data.message || '删除文件失败');
+    }
+  } catch (error) {
+    if (error === 'cancel') {
+      return; // 用户取消删除，不做处理
+    }
+    console.error('删除文件出错:', error);
+    ElMessage.error(`删除文件失败: ${error.response?.data?.detail || error.message}`);
+  } finally {
+    // 关闭loading
+    ElLoading.service().close();
+  }
+};
 
 // 处理批量删除
 const handleBatchDelete = () => {
@@ -802,7 +891,64 @@ const handleBatchDelete = () => {
   batchDeleteDialogVisible.value = true;
 };
 
-// 确认批量删除const confirmBatchDelete = async () => {  try {    // 显示loading    const loadingInstance = ElLoading.service({      text: '正在批量删除文件并清理向量数据库...',      background: 'rgba(0, 0, 0, 0.7)'    });        // 获取token    const token = localStorage.getItem('token');        // 获取所有选中文件的ID    const fileIds = multipleSelection.value.map(file => file.id);        // 构建请求数据    const requestData = {      file_ids: fileIds    };        // 发送批量删除请求    const response = await axios.post(`${baseApiUrl}/admin/content/knowledge-files/batch-delete`, requestData, {      headers: {        'Authorization': `Bearer ${token}`      }    });        if (response.data.success) {      // 处理向量数据库操作结果      if (response.data.vector_db_error) {        ElMessage({          type: 'warning',          message: response.data.message,          duration: 5000,          showClose: true        });        console.error('向量数据库清理错误:', response.data.vector_db_error);      } else {        ElMessage.success(response.data.message);      }            // 删除成功后刷新文件列表      loadFileList();      // 关闭对话框并清空选择      batchDeleteDialogVisible.value = false;      multipleSelection.value = [];    } else {      ElMessage.error(response.data.message || '批量删除文件失败');    }  } catch (error) {    console.error('批量删除文件出错:', error);    ElMessage.error(`批量删除文件失败: ${error.response?.data?.detail || error.message}`);  } finally {    // 关闭loading    ElLoading.service().close();  }};
+// 确认批量删除
+const confirmBatchDelete = async () => {
+  try {
+    // 显示loading
+    const loadingInstance = ElLoading.service({
+      text: '正在批量删除文件并清理向量数据库...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    });
+    
+    // 获取token
+    const token = localStorage.getItem('token');
+    
+    // 获取所有选中文件的ID
+    const fileIds = multipleSelection.value.map(file => file.id);
+    
+    // 构建请求数据
+    const requestData = {
+      file_ids: fileIds
+    };
+    
+    // 发送批量删除请求
+    const response = await axios.post(`${baseApiUrl}/admin/content/knowledge-files/batch-delete`, requestData, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (response.data.success) {
+      // 处理向量数据库操作结果
+      if (response.data.vector_db_error) {
+        ElMessage({
+          type: 'warning',
+          message: response.data.message,
+          duration: 5000,
+          showClose: true
+        });
+        console.error('向量数据库清理错误:', response.data.vector_db_error);
+      } else {
+        ElMessage.success(response.data.message);
+      }
+      
+      // 删除成功后刷新文件列表
+      loadFileList();
+      
+      // 关闭对话框并清空选择
+      batchDeleteDialogVisible.value = false;
+      multipleSelection.value = [];
+    } else {
+      ElMessage.error(response.data.message || '批量删除文件失败');
+    }
+  } catch (error) {
+    console.error('批量删除文件出错:', error);
+    ElMessage.error(`批量删除文件失败: ${error.response?.data?.detail || error.message}`);
+  } finally {
+    // 关闭loading
+    ElLoading.service().close();
+  }
+};
 
 // 分页处理
 const handleSizeChange = (size) => {
@@ -818,6 +964,10 @@ const handleCurrentChange = (page) => {
 // 获取文件图标颜色
 const getFileIconColor = (fileType) => {
   switch(fileType) {
+    case '.pdf':
+      return '#e53935'; // 红色
+    case '.docx':
+      return '#4285f4'; // 微软蓝色
     case '.xlsx':
       return '#1f883d'; // 绿色
     case '.xls':
@@ -1505,6 +1655,11 @@ const resetFilters = () => {
 
 .error-list li {
   margin-bottom: 5px;
+}
+
+.warning-text {
+  color: #e6a23c;
+  font-weight: 600;
 }
 
 :deep(.el-collapse) {

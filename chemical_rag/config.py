@@ -16,8 +16,6 @@ class Config:
         self.embedding_model_path = r"C:\wu\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
         self.vector_db_path = r"C:\wu\RAG\vector_store\data"  # FAISS向量数据库存储目录
         self.rerank_model_path = r"C:\wu\models\bge-reranker-large"  # 重排序模型路径
-        # self.excel_dir = r"C:\Users\coinrainy\Desktop\毕设\data\chunks"  # Excel文件目录
-        self.excel_dir = r"C:\wu\RAG\data\chunks"  # Excel文件目录
 
         self.cache_dir = "cache"  # 缓存目录
         self.max_backups = 5  # 保留的最大备份数量
@@ -30,7 +28,8 @@ class Config:
 
         self.knowledge_base_path = r"C:\wu\RAG\data\chunks"  # 知识库文件目录，存放Excel文件
         self.safety_document_path = r"C:\wu\RAG\data\safey_document"  # 安全资料库目录，存放PDF、Word文档
-        self.emergency_plan_path = r"C:\wu\RAG\data\emergency_document"  # 应急预案目录，存放PDF、Word文档
+        self.emergency_plan_path = r"C:\wu\RAG\data\emergency_document"  # 事故案例目录，存放PDF、Word文档
+
         # ████████ 硬件配置 ████████
         self.cuda_lazy_init = True  # 延迟CUDA初始化（避免显存立即被占用）
         self.device = "cuda" if torch.cuda.is_available() else "cpu"  # 自动检测设备
