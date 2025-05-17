@@ -287,8 +287,11 @@
       v-model="previewDialogVisible"
       title="文件预览"
       width="80%"
-      top="5vh"
+      top="8vh"
       class="preview-dialog"
+      :append-to-body="true"
+      destroy-on-close
+      :close-on-click-modal="false"
     >
       <div v-loading="previewLoading" class="preview-container">
         <div v-if="selectedFile" class="file-info">
@@ -324,7 +327,7 @@
             <el-button type="primary" :icon="Download" @click="downloadFile(selectedFile)">下载文件</el-button>
           </div>
           <div v-if="selectedFile.fileType.toLowerCase() === '.pdf' && previewUrl" class="pdf-preview">
-            <iframe :src="previewUrl" width="100%" height="500" frameborder="0"></iframe>
+            <iframe :src="previewUrl" width="100%" height="600" frameborder="0"></iframe>
           </div>
         </div>
       </div>
@@ -1042,31 +1045,60 @@ const resetFilters = () => {
   margin-right: 20px;
 }
 
+.preview-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:deep(.preview-dialog .el-dialog) {
+  margin: 0;
+  margin-top: 8vh !important;
+  max-height: 85vh;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+:deep(.preview-dialog .el-dialog__body) {
+  flex: 1;
+  overflow: auto;
+  padding: 20px !important;
+}
+
 .preview-container {
   min-height: 300px;
+  max-height: calc(80vh - 180px);
+  overflow-y: auto;
+  padding: 10px;
 }
 
 .file-info {
-  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
 
 .file-info h3 {
-  margin: 0 0 10px 0;
   font-size: 18px;
   font-weight: 600;
+  margin: 0;
+  word-break: break-word;
 }
 
 .file-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 15px;
-  margin-bottom: 15px;
+  gap: 20px;
+  padding: 15px;
+  background-color: #f9fafc;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
 }
 
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
 }
 
 .meta-label {
@@ -1075,13 +1107,27 @@ const resetFilters = () => {
 }
 
 .preview-message {
-  margin: 20px 0;
+  margin: 15px 0;
 }
 
 .preview-actions {
-  margin-top: 20px;
   display: flex;
   justify-content: center;
+  margin-top: 20px;
+}
+
+.pdf-preview {
+  margin-top: 20px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  overflow: hidden;
+  height: 600px;
+}
+
+.pdf-preview iframe {
+  border: none;
+  width: 100%;
+  height: 100%;
 }
 
 /* 批量删除对话框样式 */

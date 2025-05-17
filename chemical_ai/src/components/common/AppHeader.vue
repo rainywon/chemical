@@ -15,17 +15,22 @@
         <button class="settings-button" @click="toggleSettings">
           <span class="settings-icon">设置</span>
         </button>
-        <div class="dropdown-menu" v-show="showSettings">
-          <div class="dropdown-item" @click="$emit('toggle-theme')">
-            <span>切换主题 ({{ currentTheme === 'light' ? '浅色' : '深色' }})</span>
+        
+        <teleport to="body">
+          <div class="dropdown-menu-container" v-show="showSettings" :style="dropdownPosition">
+            <div class="dropdown-menu">
+              <div class="dropdown-item" @click="handleToggleTheme">
+                <span>切换主题 ({{ currentTheme === 'light' ? '浅色' : '深色' }})</span>
+              </div>
+              <div class="dropdown-item" @click="handleShowFeedback">
+                <span>信息反馈</span>
+              </div>
+              <div class="dropdown-item" @click="handleLogout">
+                <span>退出登录</span>
+              </div>
+            </div>
           </div>
-          <div class="dropdown-item" @click="$emit('show-feedback')">
-            <span>信息反馈</span>
-          </div>
-          <div class="dropdown-item" @click="$emit('logout')">
-            <span>退出登录</span>
-          </div>
-        </div>
+        </teleport>
       </div>
     </div>
   </div>
@@ -44,19 +49,14 @@ const props = defineProps({
 });
 
 // Emits
-defineEmits(['toggle-theme', 'show-feedback', 'logout']);
+const emit = defineEmits(['toggle-theme', 'show-feedback', 'logout']);
 
 // State
 const showSettings = ref(false);
 const systemStatus = ref('normal');
 const settingsDropdown = ref(null);
-
-// 点击外部关闭下拉菜单
-const handleClickOutside = (event) => {
-  if (settingsDropdown.value && !settingsDropdown.value.contains(event.target)) {
-    showSettings.value = false;
-  }
-};
+const dropdownPosition = ref({});
+const statusTimer = ref(null);
 
 // 获取系统状态
 const fetchSystemStatus = async () => {
@@ -88,23 +88,85 @@ const statusText = computed(() => {
 });
 
 // Methods
+const handleToggleTheme = () => {
+  showSettings.value = false;
+  emit('toggle-theme');
+};
+
+const handleShowFeedback = () => {
+  showSettings.value = false;
+  emit('show-feedback');
+};
+
+const handleLogout = () => {
+  showSettings.value = false;
+  emit('logout');
+};
+
+const calculateDropdownPosition = () => {
+  if (!settingsDropdown.value) return;
+  
+  const rect = settingsDropdown.value.getBoundingClientRect();
+  
+  dropdownPosition.value = {
+    position: 'fixed',
+    top: `${rect.bottom}px`,
+    right: `${window.innerWidth - rect.right}px`
+  };
+};
+
 const toggleSettings = () => {
   showSettings.value = !showSettings.value;
+  
+  if (showSettings.value) {
+    calculateDropdownPosition();
+  }
+};
+
+const handleClickOutside = (event) => {
+  if (showSettings.value && settingsDropdown.value && !settingsDropdown.value.contains(event.target)) {
+    const dropdownMenus = document.querySelectorAll('.dropdown-menu-container');
+    let clickedOnMenu = false;
+    
+    dropdownMenus.forEach(menu => {
+      if (menu.contains(event.target)) {
+        clickedOnMenu = true;
+      }
+    });
+    
+    if (!clickedOnMenu) {
+      showSettings.value = false;
+    }
+  }
 };
 
 // 组件挂载时获取系统状态
 onMounted(() => {
   fetchSystemStatus();
   // 将轮询间隔从30秒增加到120秒（2分钟）
-  const statusTimer = setInterval(fetchSystemStatus, 120000);
+  statusTimer.value = setInterval(fetchSystemStatus, 120000);
   
   // 添加点击外部关闭事件监听
   document.addEventListener('click', handleClickOutside);
   
-  // 组件卸载时清除定时器
-  onUnmounted(() => {
-    if (statusTimer) clearInterval(statusTimer);
-    document.removeEventListener('click', handleClickOutside);
+  // 添加窗口大小变化监听，以更新下拉菜单位置
+  window.addEventListener('resize', () => {
+    if (showSettings.value) {
+      calculateDropdownPosition();
+    }
+  });
+});
+
+// 组件卸载时清除定时器和事件监听
+onUnmounted(() => {
+  if (statusTimer.value) {
+    clearInterval(statusTimer.value);
+  }
+  document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', () => {
+    if (showSettings.value) {
+      calculateDropdownPosition();
+    }
   });
 });
 </script>
@@ -228,16 +290,29 @@ onMounted(() => {
   background: rgba(0, 0, 0, 0.05);
 }
 
+.dropdown-menu-container {
+  position: fixed;
+  z-index: 20000;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+}
+
 .dropdown-menu {
-  position: absolute;
-  top: 40px;
-  right: 0;
   background: white;
   border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-  min-width: 160px;
-  z-index: 100;
   overflow: hidden;
+  min-width: 160px;
+  animation: dropdownFadeIn 0.2s ease;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .dropdown-item {

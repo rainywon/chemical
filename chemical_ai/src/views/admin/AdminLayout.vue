@@ -440,31 +440,16 @@ const updateActiveMenu = () => {
         case 'login-history': text = '用户登录历史'; break;
         case 'admins': text = '管理员管理'; break;
         case 'admin-management': text = '管理员与角色管理'; break;
-        case 'logs': text = '操作日志'; break;
-        case 'content': text = '内容资源管理'; break;
-        case 'knowledge-files': text = '知识库管理'; break;
-        case 'safety-materials': text = '安全文档库'; break;
+        case 'logs': text = '管理员操作日志'; break;
+        case 'content': text = '内容管理'; break;
+        case 'knowledge-files': text = '知识库文件管理'; break;
+        case 'safety-materials': text = '安全资料库'; break;
         case 'emergency-materials': text = '应急预案库'; break;
-        case 'review': text = '内容审核'; break;
         case 'feedback': text = '反馈管理'; break;
-        case 'list': 
-          if (pathParts[1] === 'feedback') {
-            text = '系统功能反馈';
-          } else {
-            text = 'list';
-          }
-          break;
-        case 'ratings': 
-          if (pathParts[1] === 'feedback') {
-            text = '生成内容反馈';
-          } else {
-            text = '内容评价分析';
-          }
-          break;
-        case 'statistics': text = '反馈分类统计'; break;
-        case 'status': text = '反馈处理状态管理'; break;
+        case 'list': text = '系统功能反馈'; break;
+        case 'ratings': text = '生成内容反馈'; break;
         case 'settings': text = '系统设置'; break;
-        case 'system-params': text = '系统参数'; break;
+        case 'system-params': text = '系统参数设置'; break;
         default: text = part.charAt(0).toUpperCase() + part.slice(1);
       }
       crumbs.push(text);
