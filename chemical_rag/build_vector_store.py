@@ -900,7 +900,6 @@ class VectorDBBuilder:
         
         logger.info(f"后处理完成，优化后的块数: {len(processed_chunks)}")
         return processed_chunks
-        
 
     def _print_chunks_summary(self, chunks: List[Document]):
         """打印文本分块结果概览"""

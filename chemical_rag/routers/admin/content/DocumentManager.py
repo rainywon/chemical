@@ -138,54 +138,55 @@ async def get_document_list(
         
         # 获取所有文件
         file_list = []
-        file_paths = glob.glob(os.path.join(SAFETY_DOCUMENT_PATH, "*.*"))
-        
-        # 记录查找到的总文件数
-        
-        for i, file_path in enumerate(file_paths):
-            file_stats = os.stat(file_path)
-            file_path_obj = Path(file_path)
-            file_name = file_path_obj.name
-            file_ext = file_path_obj.suffix.lower()  # 转为小写便于比较
-            
-            # 只处理 pdf、doc、docx 文件
-            if file_ext not in ['.pdf', '.doc', '.docx']:
-                continue
-            
-            file_info = {
-                "id": str(i + 1),
-                "fileName": file_name,
-                "fileType": file_ext,
-                "fileSize": file_stats.st_size,
-                "createdTime": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
-                "lastModified": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
-                "path": file_path
-            }
-            
-            # 应用搜索过滤
-            if search_query and search_query.lower() not in file_name.lower():
-                continue
+        # 使用 os.walk 递归遍历目录
+        for root, dirs, files in os.walk(SAFETY_DOCUMENT_PATH):
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                file_stats = os.stat(file_path)
+                file_ext = os.path.splitext(file_name)[1].lower()  # 转为小写便于比较
                 
-            # 应用文件类型过滤
-            if file_type and file_ext != file_type:
-                continue
+                # 只处理 pdf、doc、docx 文件
+                if file_ext not in ['.pdf', '.doc', '.docx']:
+                    continue
                 
-            # 应用日期范围过滤
-            if start_date or end_date:
-                file_date = datetime.fromtimestamp(file_stats.st_mtime)
+                # 计算相对路径
+                rel_path = os.path.relpath(file_path, SAFETY_DOCUMENT_PATH)
                 
-                if start_date:
-                    start_datetime = datetime.fromisoformat(start_date)
-                    if file_date < start_datetime:
-                        continue
-                        
-                if end_date:
-                    end_datetime = datetime.fromisoformat(end_date)
-                    end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
-                    if file_date > end_datetime:
-                        continue
-            
-            file_list.append(file_info)
+                file_info = {
+                    "id": str(len(file_list) + 1),
+                    "fileName": file_name,
+                    "fileType": file_ext,
+                    "fileSize": file_stats.st_size,
+                    "createdTime": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
+                    "lastModified": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                    "path": file_path,
+                    "relativePath": rel_path  # 添加相对路径信息
+                }
+                
+                # 应用搜索过滤
+                if search_query and search_query.lower() not in file_name.lower():
+                    continue
+                
+                # 应用文件类型过滤
+                if file_type and file_ext != file_type:
+                    continue
+                
+                # 应用日期范围过滤
+                if start_date or end_date:
+                    file_date = datetime.fromtimestamp(file_stats.st_mtime)
+                    
+                    if start_date:
+                        start_datetime = datetime.fromisoformat(start_date)
+                        if file_date < start_datetime:
+                            continue
+                            
+                    if end_date:
+                        end_datetime = datetime.fromisoformat(end_date)
+                        end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+                        if file_date > end_datetime:
+                            continue
+                
+                file_list.append(file_info)
         
         # 记录过滤后的文件数
         

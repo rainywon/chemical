@@ -952,9 +952,39 @@ class RAGSystem:
             
             # 阶段3：流式生成
             try:
+                import time  # 新增时间模块导入
+                token_count = 0  # 初始化token计数器
+                start_time = time.time()  # 记录生成开始时间
+                last_chunk_time = start_time  # 记录上一个chunk时间
                 for chunk in self.llm.stream(prompt):
+                    current_time = time.time()
                     cleaned_chunk = chunk.replace("<|im_end|>", "")
                     if cleaned_chunk:
+                        # 计算token数量（假设有tokenizer属性）
+                        chunk_tokens = len(self.llm.tokenizer.encode(
+                            cleaned_chunk, 
+                            add_special_tokens=False,
+                            return_tensors=None
+                        ))
+                        token_count += chunk_tokens
+                        
+                        # 计算速度指标
+                        elapsed_total = current_time - start_time
+                        avg_speed = token_count / elapsed_total  # 平均速度
+                        elapsed_chunk = current_time - last_chunk_time
+                        instant_speed = chunk_tokens / elapsed_chunk  # 瞬时速度
+                        
+                        # 打印速度日志（保留2位小数）
+                        logger.info(
+                            f"🚄 Token生成速度 | 会话ID: {session_id} | "
+                            f"平均速度: {avg_speed:.2f}tok/s | "
+                            f"瞬时速度: {instant_speed:.2f}tok/s | "
+                            f"累计Token: {token_count}"
+                        )
+                        
+                        last_chunk_time = current_time  # 更新最后chunk时间
+
+
                         # 发送生成内容
                         yield json.dumps({
                             "type": "content",

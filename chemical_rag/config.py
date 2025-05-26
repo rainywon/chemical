@@ -10,12 +10,12 @@ class Config:
     def __init__(self, data_dir: str = r"C:\wu\RAG\data"):
         # ████████ 路径配置 ████████
         self.data_dir = Path(data_dir)  # 数据存储根目录（自动转换为Path对象）
-        #self.embedding_model_path = r"C:\Users\coins\Desktop\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
-        #self.vector_db_path = "vector_store/data"  # FAISS向量数据库存储目录
-        #self.rerank_model_path = r"C:\Users\coins\Desktop\models\bge-reranker-large"  # 重排序模型路径
-        self.embedding_model_path = r"C:\wu\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
-        self.vector_db_path = r"C:\wu\RAG\vector_store\data"  # FAISS向量数据库存储目录
-        self.rerank_model_path = r"C:\wu\models\bge-reranker-large"  # 重排序模型路径
+        self.embedding_model_path = r"C:\Users\coinrainy\Desktop\data\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
+        self.vector_db_path = "vector_store/data"  # FAISS向量数据库存储目录
+        self.rerank_model_path = r"C:\Users\coinrainy\Desktop\data\models\bge-reranker-large"  # 重排序模型路径
+        # self.embedding_model_path = r"C:\wu\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
+        # self.vector_db_path = r"C:\wu\RAG\vector_store\data"  # FAISS向量数据库存储目录
+        # self.rerank_model_path = r"C:\wu\models\bge-reranker-large"  # 重排序模型路径
 
 
         self.cache_dir = "cache"  # 缓存目录
@@ -23,13 +23,13 @@ class Config:
 
         # ████████ 内容管理路径配置 ████████
         # 知识库、安全资料库和应急预案文件路径
-        # self.knowledge_base_path = r"C:\Users\coinrainy\Desktop\毕设\data\chunks"  # 知识库文件目录，存放Excel文件
-        # self.safety_document_path = r"C:\Users\coinrainy\Desktop\毕设\data\安全资料库"  # 安全资料库目录，存放PDF、Word文档
-        # self.emergency_plan_path = r"C:\Users\coinrainy\Desktop\毕设\data\案例库"  # 应急预案目录，存放PDF、Word文档
+        self.knowledge_base_path = r"C:\Users\coinrainy\Desktop\毕设\data\chunks"  # 知识库文件目录，存放Excel文件
+        self.safety_document_path = r"C:\Users\coinrainy\Desktop\毕设\data\安全资料库"  # 安全资料库目录，存放PDF、Word文档
+        self.emergency_plan_path = r"C:\Users\coinrainy\Desktop\毕设\data\案例库"  # 应急预案目录，存放PDF、Word文档
 
-        self.knowledge_base_path = r"C:\wu\RAG\data\chunks"  # 知识库文件目录，存放Excel文件
-        self.safety_document_path = r"C:\wu\RAG\data\safey_document"  # 安全资料库目录，存放PDF、Word文档
-        self.emergency_plan_path = r"C:\wu\RAG\data\emergency_document"  # 应急预案目录，存放PDF、Word文档
+        # self.knowledge_base_path = r"C:\wu\RAG\data\chunks"  # 知识库文件目录，存放Excel文件
+        # self.safety_document_path = r"C:\wu\RAG\data\safey_document"  # 安全资料库目录，存放PDF、Word文档
+        # self.emergency_plan_path = r"C:\wu\RAG\data\emergency_document"  # 应急预案目录，存放PDF、Word文档
         # ████████ 硬件配置 ████████
         self.cuda_lazy_init = True  # 延迟CUDA初始化（避免显存立即被占用）
         self.device = "cuda" if torch.cuda.is_available() else "cpu"  # 自动检测设备
