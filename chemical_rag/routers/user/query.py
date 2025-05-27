@@ -191,3 +191,44 @@ async def query_model_chat(request: ChatQueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理直接多轮对话请求时出错: {str(e)}")
+
+
+class TokenSpeedTestRequest(BaseModel):
+    question: str
+    test_type: str = "rag"  # 可选值: "rag" 或 "model"
+
+@router.post("/token_speed_test/")
+async def token_speed_test(request: TokenSpeedTestRequest):
+    """测试token生成速度
+    
+    Args:
+        request: 包含测试问题和测试类型的请求对象
+        
+    Returns:
+        包含生成速度信息的JSON响应
+    """
+    try:
+        question = request.question.strip()
+        test_type = request.test_type.lower()
+        
+        if test_type not in ["rag", "model"]:
+            raise HTTPException(status_code=400, detail="test_type必须是'rag'或'model'")
+            
+        # 调用RAG系统的answer_query方法进行测试
+        answer, references, metadata = rag_system.answer_query(question)
+        
+        # 构建响应数据
+        response_data = {
+            "status": "success",
+            "test_type": test_type,
+            "token_count": metadata.get("token_count", 0),
+            "avg_speed": metadata.get("avg_speed", 0),
+            "generation_time": metadata.get("generation_time", 0),
+            "answer_length": len(answer),
+            "references_count": len(references)
+        }
+        
+        return response_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Token速度测试失败: {str(e)}")

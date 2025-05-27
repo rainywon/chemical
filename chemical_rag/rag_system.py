@@ -1062,12 +1062,61 @@ class RAGSystem:
             # 构建多轮对话提示（无知识库上下文）
             prompt = self._build_chat_prompt(current_question, chat_history)
             
-            # 流式生成
+            # 流式生成，增加token速度统计
             try:
+                import time
+                from collections import deque
+
+                TOKEN_ESTIMATE_MODE = "char"  # 可选：char/auto
+                FALLBACK_RATIO = {
+                    "en": 0.25,  # 1 token ≈ 4 chars (英文)
+                    "zh": 0.5    # 1 token ≈ 2 chars (中文)
+                }
+
+                token_count = 0
+                start_time = time.perf_counter()
+                last_chunk_time = start_time
+                speed_window = deque(maxlen=10)
+
+                tokenizer = None
+                if hasattr(self.llm, 'tokenizer') and self.llm.tokenizer is not None:
+                    tokenizer = self.llm.tokenizer
+                else:
+                    logger.warning("⚠️ OllamaLLM无tokenizer，回退到字符估算模式")
+                    TOKEN_ESTIMATE_MODE = "char"
+
                 for chunk in self.llm.stream(prompt):
+                    current_time = time.perf_counter()
                     cleaned_chunk = chunk.replace("<|im_end|>", "")
+                    
                     if cleaned_chunk:
-                        # 发送生成内容
+                        chunk_tokens = 0
+                        if TOKEN_ESTIMATE_MODE == "auto" and tokenizer:
+                            try:
+                                tokens = tokenizer.encode(cleaned_chunk, add_special_tokens=False)
+                                chunk_tokens = len(tokens)
+                            except Exception as e:
+                                logger.error(f"分词失败: {str(e)}")
+                                chunk_tokens = len(cleaned_chunk) * FALLBACK_RATIO["en"]
+                        else:
+                            zh_char_count = sum(1 for c in cleaned_chunk if '\u4e00' <= c <= '\u9fff')
+                            en_char_count = len(cleaned_chunk) - zh_char_count
+                            chunk_tokens = int(en_char_count * FALLBACK_RATIO["en"] + zh_char_count * FALLBACK_RATIO["zh"])
+
+                        token_count += chunk_tokens
+                        elapsed_total = current_time - start_time
+                        avg_speed = token_count / elapsed_total if elapsed_total > 0 else 0
+                        elapsed_chunk = current_time - last_chunk_time
+                        instant_speed = chunk_tokens / elapsed_chunk if elapsed_chunk > 0 else 0
+
+                        logger.info(
+                            f"🚄 Token生成速度 | 会话ID: {session_id} | "
+                            f"平均速度: {avg_speed:.2f}tok/s | "
+                            f"瞬时速度: {instant_speed:.2f}tok/s | "
+                            f"累计Token: {token_count}"
+                        )
+                        last_chunk_time = current_time
+
                         yield json.dumps({
                             "type": "content",
                             "data": cleaned_chunk
@@ -1134,12 +1183,42 @@ class RAGSystem:
             # 阶段3：构建提示模板
             prompt = self._build_prompt(question, context)
             
-            # 阶段4：一次性生成（非流式）
+            # 阶段4：一次性生成（非流式），增加token速度统计
             try:
+                import time
+                TOKEN_ESTIMATE_MODE = "char"  # 可选：char/auto
+                FALLBACK_RATIO = {
+                    "en": 0.25,  # 1 token ≈ 4 chars (英文)
+                    "zh": 0.5    # 1 token ≈ 2 chars (中文)
+                }
+                token_count = 0
+                start_time = time.perf_counter()
+                tokenizer = None
+                if hasattr(self.llm, 'tokenizer') and self.llm.tokenizer is not None:
+                    tokenizer = self.llm.tokenizer
+                else:
+                    logger.warning("⚠️ OllamaLLM无tokenizer，回退到字符估算模式")
+                    TOKEN_ESTIMATE_MODE = "char"
                 answer = self.llm.invoke(prompt)
                 cleaned_answer = answer.replace("<|im_end|>", "").strip()
-                
-                return cleaned_answer, references, {"status": "success"}
+                # Token统计
+                if TOKEN_ESTIMATE_MODE == "auto" and tokenizer:
+                    try:
+                        tokens = tokenizer.encode(cleaned_answer, add_special_tokens=False)
+                        token_count = len(tokens)
+                    except Exception as e:
+                        logger.error(f"分词失败: {str(e)}")
+                        token_count = int(len(cleaned_answer) * FALLBACK_RATIO["en"])
+                else:
+                    zh_char_count = sum(1 for c in cleaned_answer if '\u4e00' <= c <= '\u9fff')
+                    en_char_count = len(cleaned_answer) - zh_char_count
+                    token_count = int(en_char_count * FALLBACK_RATIO["en"] + zh_char_count * FALLBACK_RATIO["zh"])
+                elapsed = time.perf_counter() - start_time
+                avg_speed = token_count / elapsed if elapsed > 0 else 0
+                logger.info(
+                    f"🚄 Token生成速度 | 平均速度: {avg_speed:.2f}tok/s | 累计Token: {token_count}"
+                )
+                return cleaned_answer, references, {"status": "success", "token_count": token_count, "avg_speed": avg_speed}
             except Exception as e:
                 logger.error(f"生成回答失败: {str(e)}")
                 # 尝试使用简化提示
@@ -1155,7 +1234,24 @@ class RAGSystem:
                     )
                     fallback_answer = self.llm.invoke(simple_prompt)
                     cleaned_fallback = fallback_answer.replace("<|im_end|>", "").strip()
-                    return cleaned_fallback, references, {"status": "partial_success", "error": str(e)}
+                    # Token统计
+                    if TOKEN_ESTIMATE_MODE == "auto" and tokenizer:
+                        try:
+                            tokens = tokenizer.encode(cleaned_fallback, add_special_tokens=False)
+                            token_count = len(tokens)
+                        except Exception as e:
+                            logger.error(f"分词失败: {str(e)}")
+                            token_count = int(len(cleaned_fallback) * FALLBACK_RATIO["en"])
+                    else:
+                        zh_char_count = sum(1 for c in cleaned_fallback if '\u4e00' <= c <= '\u9fff')
+                        en_char_count = len(cleaned_fallback) - zh_char_count
+                        token_count = int(en_char_count * FALLBACK_RATIO["en"] + zh_char_count * FALLBACK_RATIO["zh"])
+                    elapsed = time.perf_counter() - start_time
+                    avg_speed = token_count / elapsed if elapsed > 0 else 0
+                    logger.info(
+                        f"🚄 Token生成速度 | 平均速度: {avg_speed:.2f}tok/s | 累计Token: {token_count}"
+                    )
+                    return cleaned_fallback, references, {"status": "partial_success", "error": str(e), "token_count": token_count, "avg_speed": avg_speed}
                 except:
                     return f"生成回答失败: {str(e)}", references, {"status": "generation_error", "error": str(e)}
             
