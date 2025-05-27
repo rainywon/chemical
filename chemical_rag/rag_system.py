@@ -953,71 +953,10 @@ class RAGSystem:
             
             # 阶段3：流式生成
             try:
-                import time
-                from collections import deque
-
-                # 新增配置项（字符估算模式）
-                TOKEN_ESTIMATE_MODE = "char"  # 可选：char/auto
-                FALLBACK_RATIO = {
-                    "en": 0.25,  # 1 token ≈ 4 chars (英文)
-                    "zh": 0.5    # 1 token ≈ 2 chars (中文)
-                }
-
-                # 初始化监控状态
-                token_count = 0
-                buffer = ""
-                start_time = time.perf_counter()
-                last_chunk_time = start_time  # 修正：初始化last_chunk_time
-                speed_window = deque(maxlen=10)
-
-                # 尝试动态加载tokenizer
-                tokenizer = None
-                if hasattr(self.llm, 'tokenizer') and self.llm.tokenizer is not None:
-                    tokenizer = self.llm.tokenizer
-                else:
-                    # OllamaLLM无model_name属性，跳过动态加载，直接用字符估算
-                    logger.warning("⚠️ OllamaLLM无tokenizer，回退到字符估算模式")
-                    TOKEN_ESTIMATE_MODE = "char"
-
                 for chunk in self.llm.stream(prompt):
-                    current_time = time.perf_counter()
                     cleaned_chunk = chunk.replace("<|im_end|>", "")
-                    
+                    # 发送生成内容
                     if cleaned_chunk:
-                        # Token估算逻辑
-                        chunk_tokens = 0
-                        if TOKEN_ESTIMATE_MODE == "auto" and tokenizer:
-                            try:
-                                tokens = tokenizer.encode(cleaned_chunk, add_special_tokens=False)
-                                chunk_tokens = len(tokens)
-                            except Exception as e:
-                                logger.error(f"分词失败: {str(e)}")
-                                chunk_tokens = len(cleaned_chunk) * FALLBACK_RATIO["en"]
-                        else:
-                            # 字符级估算（区分中英文）
-                            zh_char_count = sum(1 for c in cleaned_chunk if '\u4e00' <= c <= '\u9fff')
-                            en_char_count = len(cleaned_chunk) - zh_char_count
-                            chunk_tokens = int(en_char_count * FALLBACK_RATIO["en"] + zh_char_count * FALLBACK_RATIO["zh"])
-
-                        token_count += chunk_tokens 
-                        
-                        # 计算速度指标
-                        elapsed_total = current_time - start_time
-                        avg_speed = token_count / elapsed_total if elapsed_total > 0 else 0  # 防止除零
-                        elapsed_chunk = current_time - last_chunk_time
-                        instant_speed = chunk_tokens / elapsed_chunk if elapsed_chunk > 0 else 0
-                        
-                        # 打印速度日志（保留2位小数）
-                        logger.info(
-                            f"🚄 Token生成速度 | 会话ID: {session_id} | "
-                            f"平均速度: {avg_speed:.2f}tok/s | "
-                            f"瞬时速度: {instant_speed:.2f}tok/s | "
-                            f"累计Token: {token_count}"
-                        )
-                        
-                        last_chunk_time = current_time  # 更新最后chunk时间
-
-                        # 发送生成内容
                         yield json.dumps({
                             "type": "content",
                             "data": cleaned_chunk
@@ -1064,59 +1003,9 @@ class RAGSystem:
             
             # 流式生成，增加token速度统计
             try:
-                import time
-                from collections import deque
-
-                TOKEN_ESTIMATE_MODE = "char"  # 可选：char/auto
-                FALLBACK_RATIO = {
-                    "en": 0.25,  # 1 token ≈ 4 chars (英文)
-                    "zh": 0.5    # 1 token ≈ 2 chars (中文)
-                }
-
-                token_count = 0
-                start_time = time.perf_counter()
-                last_chunk_time = start_time
-                speed_window = deque(maxlen=10)
-
-                tokenizer = None
-                if hasattr(self.llm, 'tokenizer') and self.llm.tokenizer is not None:
-                    tokenizer = self.llm.tokenizer
-                else:
-                    logger.warning("⚠️ OllamaLLM无tokenizer，回退到字符估算模式")
-                    TOKEN_ESTIMATE_MODE = "char"
-
                 for chunk in self.llm.stream(prompt):
-                    current_time = time.perf_counter()
                     cleaned_chunk = chunk.replace("<|im_end|>", "")
-                    
                     if cleaned_chunk:
-                        chunk_tokens = 0
-                        if TOKEN_ESTIMATE_MODE == "auto" and tokenizer:
-                            try:
-                                tokens = tokenizer.encode(cleaned_chunk, add_special_tokens=False)
-                                chunk_tokens = len(tokens)
-                            except Exception as e:
-                                logger.error(f"分词失败: {str(e)}")
-                                chunk_tokens = len(cleaned_chunk) * FALLBACK_RATIO["en"]
-                        else:
-                            zh_char_count = sum(1 for c in cleaned_chunk if '\u4e00' <= c <= '\u9fff')
-                            en_char_count = len(cleaned_chunk) - zh_char_count
-                            chunk_tokens = int(en_char_count * FALLBACK_RATIO["en"] + zh_char_count * FALLBACK_RATIO["zh"])
-
-                        token_count += chunk_tokens
-                        elapsed_total = current_time - start_time
-                        avg_speed = token_count / elapsed_total if elapsed_total > 0 else 0
-                        elapsed_chunk = current_time - last_chunk_time
-                        instant_speed = chunk_tokens / elapsed_chunk if elapsed_chunk > 0 else 0
-
-                        logger.info(
-                            f"🚄 Token生成速度 | 会话ID: {session_id} | "
-                            f"平均速度: {avg_speed:.2f}tok/s | "
-                            f"瞬时速度: {instant_speed:.2f}tok/s | "
-                            f"累计Token: {token_count}"
-                        )
-                        last_chunk_time = current_time
-
                         yield json.dumps({
                             "type": "content",
                             "data": cleaned_chunk
