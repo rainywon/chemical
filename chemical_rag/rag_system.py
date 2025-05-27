@@ -153,8 +153,8 @@ class RAGSystem:
             logger.info("🚀 正在初始化Ollama模型...")
             # 创建OllamaLLM实例
             self.llm = OllamaLLM(
-                # model="deepseek_8B:latest",  # 模型名称
-                model="deepseek-r1:1.5b",
+                model="deepseek_8B:latest",  # 模型名称
+                # model="deepseek-r1:1.5b",
                 #deepseek_8B:latest   1513b8b198dc    8.5 GB    59 seconds ago
                 # deepseek-r1:8b             2deepseek_8B:latest GB    46 minutes ago
                 # deepseek-r1:14b            ea35dfe18182    9.0 GB    29 hours ago
